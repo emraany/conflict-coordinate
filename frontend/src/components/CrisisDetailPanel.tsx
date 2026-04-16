@@ -31,7 +31,7 @@ function SectionHeader({ children, count }: { children: React.ReactNode; count?:
     >
       <span
         className="stamp"
-        style={{ fontSize: 11, color: colors.amber, letterSpacing: "0.22em" }}
+        style={{ fontSize: 11, color: colors.oliveLight, letterSpacing: "0.22em" }}
       >
         {children}
       </span>

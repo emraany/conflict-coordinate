@@ -2,17 +2,22 @@
 // Keep in sync with the CSS variables declared in global.css.
 
 export const colors = {
-  bg: "#0b0d10",
-  bgRaised: "#11141a",
+  bg: "#2e3338",
+  bgRaised: "#3a4048",
+  bgSunken: "#252930",
   text: "#e8dcc4",
-  textMuted: "#8a8578",
-  textDim: "#5b5a53",
-  rule: "#2a2d33",
-  ruleStrong: "#3d4048",
-  active: "#b3332a",
-  activeGlow: "rgba(179, 51, 42, 0.35)",
-  amber: "#c8a96a",
-  olive: "#5a6358",
+  textMuted: "#a8a294",
+  textDim: "#7c7a6e",
+  rule: "#525862",
+  ruleStrong: "#6b727c",
+  olive: "#6b7354",
+  oliveLight: "#8a9070",
+  oliveDim: "#4a523c",
+  active: "#a64a3a",
+  activeGlow: "rgba(166, 74, 58, 0.35)",
+  frozen: "#a8a294",
+  resolved: "#5a6358",
+  amberReserved: "#c8a96a",
   inkShadow: "rgba(0, 0, 0, 0.55)",
 } as const;
 
@@ -48,9 +53,9 @@ export const statusColor = (status: string): string => {
     case "active":
       return colors.active;
     case "frozen":
-      return colors.amber;
+      return colors.frozen;
     case "resolved":
-      return colors.olive;
+      return colors.resolved;
     default:
       return colors.textMuted;
   }

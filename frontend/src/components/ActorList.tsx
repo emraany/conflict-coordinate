@@ -82,7 +82,7 @@ export function ActorList({ actors, sources }: Props) {
                 <span style={{ color: colors.text }}>{link.actor.name}</span>
                 <span
                   className="label"
-                  style={{ fontSize: 10, color: colors.amber }}
+                  style={{ fontSize: 10, color: colors.oliveLight }}
                 >
                   {roleLabel(link.role)}
                 </span>

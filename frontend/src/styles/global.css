@@ -1,15 +1,20 @@
 :root {
-  --color-bg: #0b0d10;
-  --color-bg-raised: #11141a;
+  --color-bg: #2e3338;
+  --color-bg-raised: #3a4048;
+  --color-bg-sunken: #252930;
   --color-text: #e8dcc4;
-  --color-text-muted: #8a8578;
-  --color-text-dim: #5b5a53;
-  --color-rule: #2a2d33;
-  --color-rule-strong: #3d4048;
-  --color-active: #b3332a;
-  --color-active-glow: rgba(179, 51, 42, 0.35);
-  --color-amber: #c8a96a;
-  --color-olive: #5a6358;
+  --color-text-muted: #a8a294;
+  --color-text-dim: #7c7a6e;
+  --color-rule: #525862;
+  --color-rule-strong: #6b727c;
+  --color-olive: #6b7354;
+  --color-olive-light: #8a9070;
+  --color-olive-dim: #4a523c;
+  --color-active: #a64a3a;
+  --color-active-glow: rgba(166, 74, 58, 0.35);
+  --color-frozen: #a8a294;
+  --color-resolved: #5a6358;
+  --color-amber-reserved: #c8a96a;
 
   --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
   --font-stamp: "Special Elite", "IBM Plex Mono", monospace;
@@ -59,8 +64,8 @@ a {
 }
 
 a:hover {
-  color: var(--color-amber);
-  text-decoration-color: var(--color-amber);
+  color: var(--color-olive-light);
+  text-decoration-color: var(--color-olive-light);
 }
 
 button {
@@ -78,8 +83,8 @@ button {
 }
 
 button:hover:not(:disabled) {
-  border-color: var(--color-amber);
-  color: var(--color-amber);
+  border-color: var(--color-olive-light);
+  color: var(--color-olive-light);
 }
 
 button:disabled {
@@ -102,7 +107,7 @@ input:focus,
 textarea:focus,
 select:focus {
   outline: none;
-  border-color: var(--color-amber);
+  border-color: var(--color-olive-light);
 }
 
 textarea {
@@ -111,8 +116,8 @@ textarea {
 }
 
 ::selection {
-  background: var(--color-amber);
-  color: var(--color-bg);
+  background: var(--color-olive);
+  color: var(--color-text);
 }
 
 /* Typography utility classes */
@@ -150,8 +155,8 @@ textarea {
     45deg,
     transparent,
     transparent 6px,
-    rgba(179, 51, 42, 0.12) 6px,
-    rgba(179, 51, 42, 0.12) 12px
+    rgba(166, 74, 58, 0.12) 6px,
+    rgba(166, 74, 58, 0.12) 12px
   );
   border-top: 1px solid var(--color-rule);
   border-bottom: 1px solid var(--color-rule);
@@ -178,6 +183,6 @@ textarea {
 
 /* Focus outline for accessibility */
 :focus-visible {
-  outline: 1px solid var(--color-amber);
+  outline: 1px solid var(--color-olive-light);
   outline-offset: 2px;
 }

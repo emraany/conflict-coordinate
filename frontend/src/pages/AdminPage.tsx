@@ -46,7 +46,7 @@ function TokenGate({ onAuthed }: { onAuthed: () => void }) {
     >
       <div
         className="stamp"
-        style={{ fontSize: 14, letterSpacing: "0.22em", color: colors.amber }}
+        style={{ fontSize: 14, letterSpacing: "0.22em", color: colors.oliveLight }}
       >
         AUTHENTICATION REQUIRED
       </div>
@@ -73,7 +73,7 @@ function TokenGate({ onAuthed }: { onAuthed: () => void }) {
         <div
           style={{
             marginTop: space.sm,
-            color: msg.kind === "err" ? colors.active : colors.amber,
+            color: msg.kind === "err" ? colors.active : colors.oliveLight,
             fontSize: 11,
           }}
         >
@@ -100,7 +100,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
         className="stamp"
         style={{
           fontSize: 12,
-          color: colors.amber,
+          color: colors.oliveLight,
           letterSpacing: "0.22em",
           paddingBottom: space.sm,
           marginBottom: space.md,
@@ -683,9 +683,9 @@ export function AdminPage() {
               top: 56,
               right: space.md,
               background: colors.bgRaised,
-              border: `1px solid ${msg.kind === "ok" ? colors.amber : colors.active}`,
+              border: `1px solid ${msg.kind === "ok" ? colors.oliveLight : colors.active}`,
               padding: `${space.sm}px ${space.md}px`,
-              color: msg.kind === "ok" ? colors.amber : colors.active,
+              color: msg.kind === "ok" ? colors.oliveLight : colors.active,
               fontSize: 11,
               letterSpacing: "0.1em",
             }}
