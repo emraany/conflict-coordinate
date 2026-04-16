@@ -1,0 +1,183 @@
+:root {
+  --color-bg: #0b0d10;
+  --color-bg-raised: #11141a;
+  --color-text: #e8dcc4;
+  --color-text-muted: #8a8578;
+  --color-text-dim: #5b5a53;
+  --color-rule: #2a2d33;
+  --color-rule-strong: #3d4048;
+  --color-active: #b3332a;
+  --color-active-glow: rgba(179, 51, 42, 0.35);
+  --color-amber: #c8a96a;
+  --color-olive: #5a6358;
+
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --font-stamp: "Special Elite", "IBM Plex Mono", monospace;
+  --font-serif: "IBM Plex Serif", Georgia, serif;
+
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.55;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+a {
+  color: var(--color-text);
+  text-decoration: underline;
+  text-decoration-color: var(--color-rule-strong);
+  text-underline-offset: 3px;
+  transition: text-decoration-color var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease);
+}
+
+a:hover {
+  color: var(--color-amber);
+  text-decoration-color: var(--color-amber);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--color-rule-strong);
+  padding: 6px 14px;
+  cursor: pointer;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: border-color var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease),
+    background var(--motion-fast) var(--ease);
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--color-amber);
+  color: var(--color-amber);
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: var(--color-text);
+  background: transparent;
+  border: 1px solid var(--color-rule);
+  padding: 6px 10px;
+  width: 100%;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--color-amber);
+}
+
+textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+::selection {
+  background: var(--color-amber);
+  color: var(--color-bg);
+}
+
+/* Typography utility classes */
+.stamp {
+  font-family: var(--font-stamp);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+.label {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.serif {
+  font-family: var(--font-serif);
+  letter-spacing: 0.005em;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.rule {
+  border: 0;
+  border-top: 1px solid var(--color-rule);
+  margin: 0;
+}
+
+.classified-stripe {
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 6px,
+    rgba(179, 51, 42, 0.12) 6px,
+    rgba(179, 51, 42, 0.12) 12px
+  );
+  border-top: 1px solid var(--color-rule);
+  border-bottom: 1px solid var(--color-rule);
+  padding: 4px 12px;
+}
+
+/* Scrollbars — stark */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-rule);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-rule-strong);
+}
+
+/* Focus outline for accessibility */
+:focus-visible {
+  outline: 1px solid var(--color-amber);
+  outline-offset: 2px;
+}
