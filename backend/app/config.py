@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     acled_enabled: bool = Field(default=False)
     acled_lookback_days: int = Field(default=90)
     acled_crisis_event_threshold: int = Field(default=10)
+    # Optional ISO date (YYYY-MM-DD) to use as "today" for ACLED queries.
+    # Set this if the system clock doesn't match real-world date.
+    acled_reference_date: str = Field(default="")
     gdelt_enabled: bool = Field(default=False)
     gdelt_attach_radius_km: int = Field(default=300)
     gdelt_lookback_minutes: int = Field(default=180)

@@ -156,7 +156,11 @@ def _slugify(text: str) -> str:
 
 def _fetch_events(client: httpx.Client, access_token: str) -> list[dict]:
     lookback_days = settings.acled_lookback_days
-    end = datetime.now(timezone.utc).date()
+    if settings.acled_reference_date:
+        from datetime import date as _date
+        end = _date.fromisoformat(settings.acled_reference_date)
+    else:
+        end = datetime.now(timezone.utc).date()
     start = end - timedelta(days=lookback_days)
     headers = {"Authorization": f"Bearer {access_token}"}
     out: list[dict] = []
@@ -167,7 +171,7 @@ def _fetch_events(client: httpx.Client, access_token: str) -> list[dict]:
             params={
                 "event_date": f"{start.isoformat()}|{end.isoformat()}",
                 "event_date_where": "BETWEEN",
-                "limit": 500,
+                "limit": 5000,
                 "page": page,
             },
             headers=headers,
@@ -179,7 +183,7 @@ def _fetch_events(client: httpx.Client, access_token: str) -> list[dict]:
         if not batch:
             break
         out.extend(batch)
-        if len(batch) < 500:
+        if len(batch) < 5000:
             break
         page += 1
         if page > 40:  # 20k event ceiling per run, protect against runaway
@@ -275,9 +279,9 @@ def _build_sources(bucket: list[dict]) -> list[SourceRef]:
         seen.add(name)
         refs.append(
             SourceRef(
-                title=f"{name} — cited by ACLED",
+                title=f"{name[:460]} — cited by ACLED",
                 url="https://acleddata.com/",
-                publisher=name,
+                publisher=name[:200],
                 source_type="news",
             )
         )
