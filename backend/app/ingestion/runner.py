@@ -15,7 +15,13 @@ from sqlalchemy.orm import Session
 
 from app.db import SessionLocal
 from app.ingestion.acled import ACLEDSource
-from app.ingestion.base import ActorRef, CrisisRecord, IngestionSource, SourceRef
+from app.ingestion.base import (
+    ActorRef,
+    CrisisRecord,
+    EventRef,
+    IngestionSource,
+    SourceRef,
+)
 from app.ingestion.fixture import FixtureSource
 from app.ingestion.gdelt import GDELTSource
 from app.models import (
@@ -28,6 +34,7 @@ from app.models import (
     Source,
     SourceType,
 )
+from app.models.event import CrisisEvent
 
 SOURCES: list[IngestionSource] = [
     FixtureSource(),
@@ -108,6 +115,39 @@ def _replace_actor_links(
     db.flush()
 
 
+def _replace_events(
+    db: Session, crisis: Crisis, event_refs: list[EventRef], source_rows: list[Source]
+) -> None:
+    # Clear existing events for this crisis and re-insert. (For sources that
+    # purge on before_run, crisis.events will be empty on fresh inserts; this
+    # loop is then a no-op. For updating paths we still want to replace.)
+    for existing in list(crisis.events):
+        db.delete(existing)
+    db.flush()
+    for ref in event_refs:
+        source_id = (
+            source_rows[ref.source_index].id
+            if ref.source_index is not None
+            and 0 <= ref.source_index < len(source_rows)
+            else None
+        )
+        db.add(
+            CrisisEvent(
+                crisis_id=crisis.id,
+                occurred_at=ref.occurred_at,
+                event_type=ref.event_type,
+                description=ref.description,
+                fatalities=ref.fatalities,
+                location_name=ref.location_name,
+                lat=ref.lat,
+                lng=ref.lng,
+                external_id=ref.external_id,
+                source_id=source_id,
+            )
+        )
+    db.flush()
+
+
 def _upsert_crisis(db: Session, source_name: str, rec: CrisisRecord) -> tuple[Crisis, bool]:
     crisis = db.scalar(
         select(Crisis).where(
@@ -169,6 +209,7 @@ def run_all_sources(db: Session | None = None) -> dict:
                     }
                 )
                 continue
+            source.before_run(db)
             records = source.fetch()
             inserted = 0
             updated = 0
@@ -176,6 +217,7 @@ def run_all_sources(db: Session | None = None) -> dict:
                 crisis, created = _upsert_crisis(db, source.name, rec)
                 source_rows = _replace_sources(db, crisis, rec.sources, source.name)
                 _replace_actor_links(db, crisis, rec.actors, source_rows)
+                _replace_events(db, crisis, rec.events, source_rows)
                 if created:
                     inserted += 1
                 else:

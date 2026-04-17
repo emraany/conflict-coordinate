@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     acled_enabled: bool = Field(default=False)
     acled_lookback_days: int = Field(default=90)
     acled_crisis_event_threshold: int = Field(default=10)
+    # DBSCAN geographic clustering radius (kilometers). Events within this
+    # distance of each other are treated as one conflict cluster.
+    acled_cluster_eps_km: float = Field(default=100.0)
+    # Minimum events for a cluster core point (DBSCAN min_samples).
+    acled_cluster_min_samples: int = Field(default=3)
     # Optional ISO date (YYYY-MM-DD) to use as "today" for ACLED queries.
     # Set this if the system clock doesn't match real-world date.
     acled_reference_date: str = Field(default="")

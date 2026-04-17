@@ -1,10 +1,14 @@
 """ACLED ingestion source.
 
-Fetches recent armed-conflict events from ACLED, groups them into
-per-country-per-year crises, and emits `CrisisRecord` objects for the runner
-to upsert. Events themselves are not persisted to `crisis_events` here —
-that would require a second write pass; for v2 we surface the aggregate
-as the crisis-level record and rely on ACLED's own URLs as sources.
+Fetches recent armed-conflict events from ACLED, clusters them geographically
+with DBSCAN (haversine metric), and emits one `CrisisRecord` per cluster for
+the runner to upsert. This replaces the earlier country-year grouping, which
+produced one dot per country at its centroid — misrepresenting scattered
+conflicts (e.g. Somaliland vs. Mogadishu) as a single event.
+
+Each cluster's centroid becomes the dot location; its dominant ACLED `admin1`
+(state/province) field supplies the human-readable name. Noise points —
+events with no dense neighborhood — are dropped.
 
 Credentials come from `ACLED_USERNAME` + `ACLED_PASSWORD`. The adapter
 caches OAuth tokens to `backend/.cache/acled_token.json` to respect the
@@ -19,16 +23,34 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from statistics import mean
 
 import httpx
+import numpy as np
+from sklearn.cluster import DBSCAN
+from sqlalchemy import delete
+from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.ingestion.base import ActorRef, CrisisRecord, IngestionSource, SourceRef
+from app.ingestion.base import (
+    ActorRef,
+    CrisisRecord,
+    EventRef,
+    IngestionSource,
+    SourceRef,
+)
+from app.models import Crisis
+
+# Defensive upper bound on ACLED `notes` copied into `CrisisEvent.description`.
+# The column is `Text` (no hard limit) but very long notes occasionally appear
+# and we don't need novel-length prose in the timeline.
+NOTES_MAX_CHARS = 2000
+
+EARTH_RADIUS_KM = 6371.0
 
 ACLED_READ_URL = "https://acleddata.com/api/acled/read"
 ACLED_OAUTH_URL = "https://acleddata.com/oauth/token"
@@ -191,58 +213,240 @@ def _fetch_events(client: httpx.Client, access_token: str) -> list[dict]:
     return out
 
 
-def _aggregate_events_to_records(events: list[dict]) -> list[CrisisRecord]:
-    threshold = settings.acled_crisis_event_threshold
-    by_country: dict[tuple[str, int], list[dict]] = defaultdict(list)
+def _parse_coord(val: object) -> float | None:
+    if val is None or val == "":
+        return None
+    try:
+        return float(val)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _cluster_events(events: list[dict]) -> list[list[dict]]:
+    """Group events into geographic clusters via DBSCAN on haversine distance.
+
+    Returns a list of buckets (each a list of events). Noise points — events
+    without a dense neighborhood of `min_samples` within `eps_km` — are
+    dropped, since a lone incident does not constitute a conflict cluster.
+    """
+    valid: list[dict] = []
+    coords: list[tuple[float, float]] = []
     for ev in events:
-        country = (ev.get("country") or "").strip()
-        if not country:
+        lat = _parse_coord(ev.get("latitude"))
+        lng = _parse_coord(ev.get("longitude"))
+        if lat is None or lng is None:
+            continue
+        if not (-90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0):
+            continue
+        valid.append(ev)
+        coords.append((lat, lng))
+
+    if not valid:
+        return []
+
+    coords_rad = np.radians(np.asarray(coords, dtype=np.float64))
+    eps_rad = settings.acled_cluster_eps_km / EARTH_RADIUS_KM
+    labels = DBSCAN(
+        eps=eps_rad,
+        min_samples=settings.acled_cluster_min_samples,
+        metric="haversine",
+    ).fit_predict(coords_rad)
+
+    buckets: dict[int, list[dict]] = {}
+    for idx, label in enumerate(labels):
+        lbl = int(label)
+        if lbl == -1:
+            continue
+        buckets.setdefault(lbl, []).append(valid[idx])
+    return list(buckets.values())
+
+
+def _first_sentence(text: str, min_len: int = 30, max_len: int = 240) -> str | None:
+    """Return the first non-trivial sentence of `text`, trimmed for display.
+
+    Used for the representative-incident lede in cluster summaries. If no
+    sentence meets `min_len`, falls back to a hard truncation so we still
+    surface verbatim ACLED prose rather than silently dropping context.
+    """
+    if not text:
+        return None
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+    for candidate in cleaned.split(". "):
+        piece = candidate.strip()
+        if len(piece) < min_len:
+            continue
+        if not piece.endswith((".", "!", "?")):
+            piece += "."
+        if len(piece) > max_len:
+            piece = piece[: max_len - 1].rstrip() + "…"
+        return piece
+    if len(cleaned) > max_len:
+        return cleaned[: max_len - 1].rstrip() + "…"
+    return cleaned
+
+
+def _pick_representative(bucket: list[dict]) -> dict | None:
+    """Select the event that best anchors the cluster summary — highest
+    fatalities first, then most recent. Events lacking a `notes` field are
+    skipped because we have nothing quotable from them."""
+    candidates = [ev for ev in bucket if (ev.get("notes") or "").strip()]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda ev: (int(ev.get("fatalities") or 0), ev.get("event_date") or ""),
+    )
+
+
+def _build_events(bucket: list[dict]) -> list[EventRef]:
+    refs: list[EventRef] = []
+    seen: set[str] = set()
+    for ev in bucket:
+        event_id = (ev.get("event_id_cnty") or "").strip()
+        if not event_id or event_id in seen:
+            continue
+        date_str = (ev.get("event_date") or "").strip()
+        if not date_str:
             continue
         try:
-            year = int((ev.get("event_date") or "")[:4])
+            occurred = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc)
         except ValueError:
             continue
-        by_country[(country, year)].append(ev)
+        seen.add(event_id)
 
+        notes = (ev.get("notes") or "").strip() or None
+        if notes and len(notes) > NOTES_MAX_CHARS:
+            notes = notes[: NOTES_MAX_CHARS - 1].rstrip() + "…"
+
+        sub_type = (ev.get("sub_event_type") or "").strip()
+        main_type = (ev.get("event_type") or "").strip()
+        event_type = sub_type or main_type or None
+
+        # Prefer the most specific admin level available for the incident
+        # location label; fall back through admin3 → admin2 → location.
+        location_name = (
+            (ev.get("location") or "").strip()
+            or (ev.get("admin3") or "").strip()
+            or (ev.get("admin2") or "").strip()
+            or None
+        )
+
+        refs.append(
+            EventRef(
+                external_id=f"acled:{event_id}",
+                occurred_at=occurred,
+                event_type=event_type,
+                description=notes,
+                fatalities=int(ev.get("fatalities") or 0),
+                location_name=location_name,
+                lat=_parse_coord(ev.get("latitude")),
+                lng=_parse_coord(ev.get("longitude")),
+                source_index=0,  # ACLED citation is always sources[0]
+            )
+        )
+    return refs
+
+
+def _aggregate_events_to_records(events: list[dict]) -> list[CrisisRecord]:
+    buckets = _cluster_events(events)
     records: list[CrisisRecord] = []
-    for (country, year), bucket in by_country.items():
-        if len(bucket) < threshold:
-            continue
-        lats = [float(ev["latitude"]) for ev in bucket if ev.get("latitude")]
-        lngs = [float(ev["longitude"]) for ev in bucket if ev.get("longitude")]
+
+    for bucket in buckets:
+        lats = [_parse_coord(ev.get("latitude")) for ev in bucket]
+        lngs = [_parse_coord(ev.get("longitude")) for ev in bucket]
+        lats = [v for v in lats if v is not None]
+        lngs = [v for v in lngs if v is not None]
         if not lats or not lngs:
             continue
-        dates = [ev["event_date"] for ev in bucket if ev.get("event_date")]
-        dates.sort()
+        centroid_lat = mean(lats)
+        centroid_lng = mean(lngs)
+
+        country_counts = Counter(
+            (ev.get("country") or "").strip()
+            for ev in bucket
+            if (ev.get("country") or "").strip()
+        )
+        top_country = country_counts.most_common(1)[0][0] if country_counts else "Unknown"
+
+        admin1_counts = Counter(
+            (ev.get("admin1") or "").strip()
+            for ev in bucket
+            if (ev.get("admin1") or "").strip()
+        )
+        top_admin1 = admin1_counts.most_common(1)[0][0] if admin1_counts else None
+
+        dates = sorted(ev["event_date"] for ev in bucket if ev.get("event_date"))
+        if not dates:
+            continue
         started = datetime.fromisoformat(dates[0]).replace(tzinfo=timezone.utc)
         last = datetime.fromisoformat(dates[-1]).replace(tzinfo=timezone.utc)
-        top_type = Counter(
+
+        type_counts = Counter(
             ev.get("event_type") for ev in bucket if ev.get("event_type")
-        ).most_common(1)
-        top_label = top_type[0][0] if top_type else "Armed conflict"
+        )
+        top_label = type_counts.most_common(1)[0][0] if type_counts else "Armed conflict"
         fatalities = sum(int(ev.get("fatalities") or 0) for ev in bucket)
 
+        pair_counts: Counter[tuple[str, str]] = Counter()
+        for ev in bucket:
+            a1 = (ev.get("actor1") or "").strip()
+            a2 = (ev.get("actor2") or "").strip()
+            if a1 and a2:
+                pair_counts[(a1, a2)] += 1
+        top_pair = pair_counts.most_common(1)[0][0] if pair_counts else None
+
+        rep = _pick_representative(bucket)
+        rep_lede = _first_sentence(rep.get("notes") if rep else "")
+        rep_date = (rep.get("event_date") if rep else "") or ""
+
         region = (bucket[0].get("region") or "").strip() or None
-        name = f"{country} — Armed conflict events ({year})"
-        summary = (
-            f"{len(bucket)} ACLED-reported events in {country} "
-            f"between {dates[0]} and {dates[-1]}. "
-            f"Most frequent event type: {top_label}. "
-            f"Reported fatalities across these events: {fatalities}."
-        )
+        location_label = f"{top_admin1}, {top_country}" if top_admin1 else top_country
+        name = f"{location_label} — {top_label}"
+
+        summary_parts: list[str] = [
+            f"{len(bucket)} ACLED-documented incidents clustered around "
+            f"{location_label} between {dates[0]} and {dates[-1]}."
+        ]
+        if top_pair:
+            summary_parts.append(
+                f"Principal actors reported: {top_pair[0]} and {top_pair[1]}."
+            )
+        if rep_lede and rep_date:
+            summary_parts.append(
+                f'Representative incident — "{rep_lede}" ({rep_date}).'
+            )
+        if fatalities > 0:
+            summary_parts.append(
+                f"Reported fatalities across these events: {fatalities}."
+            )
+        summary = " ".join(summary_parts)
+
+        # Stable external_id via quantized centroid (0.5° grid, ~55 km).
+        # Two DBSCAN-distinct clusters are typically ≥ eps_km apart, so they
+        # land in different cells; a cluster's centroid is unlikely to drift
+        # across a cell boundary between runs on similar data.
+        qlat = round(centroid_lat * 2) / 2
+        qlng = round(centroid_lng * 2) / 2
+        country_slug = _slugify(top_country)
+        admin1_slug = _slugify(top_admin1) if top_admin1 else "area"
+        external_id = f"acled:{country_slug}:{admin1_slug}:{qlat}:{qlng}"
+        slug = _slugify(f"{top_country}-{top_admin1 or 'area'}-{qlat}-{qlng}")
 
         sources = _build_sources(bucket)
         actors = _build_actors(bucket, sources)
+        event_refs = _build_events(bucket)
 
         records.append(
             CrisisRecord(
-                external_id=f"acled:{_slugify(country)}:{year}",
-                slug=_slugify(f"{country}-acled-{year}"),
+                external_id=external_id,
+                slug=slug,
                 name=name,
-                country=country,
+                country=top_country,
                 region=region,
-                lat=mean(lats),
-                lng=mean(lngs),
+                lat=centroid_lat,
+                lng=centroid_lng,
                 summary=summary,
                 status="active",
                 conflict_type=EVENT_TYPE_MAP.get(top_label, "armed_conflict"),
@@ -250,6 +454,7 @@ def _aggregate_events_to_records(events: list[dict]) -> list[CrisisRecord]:
                 last_event_at=last,
                 actors=actors,
                 sources=sources,
+                events=event_refs,
             )
         )
     return records
@@ -316,6 +521,15 @@ def _build_actors(
 
 class ACLEDSource(IngestionSource):
     name = "acled"
+
+    def before_run(self, db: Session) -> None:
+        # Clusters are recomputed from scratch each run, so prior ACLED-sourced
+        # crises would otherwise linger as orphans. Delete them; relationships
+        # cascade to sources, actor links, and attached events.
+        if not settings.acled_enabled:
+            return
+        db.execute(delete(Crisis).where(Crisis.source_name == self.name))
+        db.flush()
 
     def fetch(self) -> list[CrisisRecord]:
         if not settings.acled_enabled:

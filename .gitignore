@@ -24,6 +24,7 @@ dist-ssr/
 .vite/
 *.local
 .eslintcache
+*.tsbuildinfo
 
 # Build
 build/

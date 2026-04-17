@@ -37,6 +37,23 @@ class ActorRef:
 
 
 @dataclass
+class EventRef:
+    """One incident attached to a crisis. `description` should be verbatim
+    prose copied from the cited source — never LLM-generated."""
+
+    external_id: str
+    occurred_at: datetime
+    event_type: str | None = None
+    description: str | None = None
+    fatalities: int | None = None
+    location_name: str | None = None
+    lat: float | None = None
+    lng: float | None = None
+    # index into the parent CrisisRecord.sources list; None if not attributed
+    source_index: int | None = None
+
+
+@dataclass
 class CrisisRecord:
     external_id: str
     slug: str
@@ -52,6 +69,7 @@ class CrisisRecord:
     last_event_at: datetime | None = None
     actors: list[ActorRef] = field(default_factory=list)
     sources: list[SourceRef] = field(default_factory=list)
+    events: list[EventRef] = field(default_factory=list)
 
 
 class IngestionSource(ABC):
@@ -62,6 +80,10 @@ class IngestionSource(ABC):
 
     @abstractmethod
     def fetch(self) -> list[CrisisRecord]: ...
+
+    def before_run(self, db) -> None:  # type: ignore[no-untyped-def]
+        # Hook for purge / prep before fetch(). Default no-op.
+        return None
 
     def attach_events(self, db) -> dict:  # type: ignore[no-untyped-def]
         return {"attached": 0, "skipped": 0}

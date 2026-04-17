@@ -4,6 +4,7 @@ import { api, ApiError } from "../api/client";
 import { colors, fonts, space } from "../styles/tokens";
 import type { CrisisDetail } from "../types";
 import { ActorList } from "./ActorList";
+import { EventTimeline } from "./EventTimeline";
 import { SourceList } from "./SourceList";
 import { StatusChip } from "./StatusChip";
 
@@ -216,12 +217,7 @@ export function CrisisDetailPanel({ slug, onClose }: Props) {
             {detail.events.length > 0 && (
               <section style={{ marginBottom: space.lg }}>
                 <SectionHeader count={detail.events.length}>TIMELINE</SectionHeader>
-                <div
-                  className="label"
-                  style={{ color: colors.textDim, fontSize: 10 }}
-                >
-                  (event timeline visualization pending)
-                </div>
+                <EventTimeline events={detail.events} sources={detail.sources} />
               </section>
             )}
 
