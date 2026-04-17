@@ -81,6 +81,7 @@ def _replace_sources(
             retrieved_at=datetime.now(timezone.utc),
             source_type=SourceType(ref.source_type),
             origin=origin,
+            body_text=ref.body_text,
         )
         db.add(src)
         created.append(src)

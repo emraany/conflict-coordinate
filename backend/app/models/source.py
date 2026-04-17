@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, func
+from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -19,6 +19,8 @@ class SourceType(str, enum.Enum):
     academic = "academic"
     official = "official"
     primary = "primary"
+    situation_report = "situation_report"
+    reference = "reference"
 
 
 class Source(Base):
@@ -37,6 +39,7 @@ class Source(Base):
         Enum(SourceType, name="source_type"), default=SourceType.news
     )
     origin: Mapped[str | None] = mapped_column(String(40), index=True)
+    body_text: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

@@ -15,6 +15,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "httpx>=0.28",
     "scikit-learn>=1.5",
+    "pycountry>=24.6",
 ]
 
 [dependency-groups]

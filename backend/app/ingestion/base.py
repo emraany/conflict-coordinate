@@ -22,6 +22,7 @@ class SourceRef:
     publisher: str | None = None
     published_at: datetime | None = None
     source_type: str = "news"
+    body_text: str | None = None
 
 
 @dataclass

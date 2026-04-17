@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     gdelt_enabled: bool = Field(default=False)
     gdelt_attach_radius_km: int = Field(default=300)
     gdelt_lookback_minutes: int = Field(default=180)
+    # ReliefWeb requires a pre-approved appname since Nov 2025 — request one
+    # at https://apidoc.reliefweb.int/parameters#appname. If empty, SITREP
+    # enrichment is skipped (Wikipedia background + actor descriptions still
+    # run, so dossiers are still richer than the old count-only template).
+    reliefweb_appname: str = Field(default="")
 
     model_config = SettingsConfigDict(
         env_file=(REPO_ROOT / ".env"),

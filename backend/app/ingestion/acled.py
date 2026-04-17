@@ -31,11 +31,13 @@ from statistics import mean
 
 import httpx
 import numpy as np
+import pycountry
 from sklearn.cluster import DBSCAN
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.ingestion import reliefweb, wikipedia
 from app.ingestion.base import (
     ActorRef,
     CrisisRecord,
@@ -174,6 +176,16 @@ def _get_token(client: httpx.Client) -> _CachedToken:
 def _slugify(text: str) -> str:
     text = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
     return text[:120] or "unknown"
+
+
+def _country_iso3(name: str | None) -> str | None:
+    if not name:
+        return None
+    try:
+        c = pycountry.countries.lookup(name)
+    except LookupError:
+        return None
+    return getattr(c, "alpha_3", None)
 
 
 def _fetch_events(client: httpx.Client, access_token: str) -> list[dict]:
@@ -349,7 +361,24 @@ def _build_events(bucket: list[dict]) -> list[EventRef]:
     return refs
 
 
-def _aggregate_events_to_records(events: list[dict]) -> list[CrisisRecord]:
+@dataclass
+class _EnrichmentContext:
+    """Per-run caches + shared HTTP client for Wikipedia/ReliefWeb lookups.
+
+    Caches are keyed to avoid duplicate network calls across the ~500
+    clusters in one ingest run (same actor names and countries recur).
+    """
+
+    wiki_client: httpx.Client
+    actor_cache: dict[str, tuple[str | None, str | None]]
+    background_cache: dict[str, tuple[str | None, str | None]]
+    reliefweb_client: httpx.Client
+    reliefweb_cache: dict[str, list[SourceRef]]
+
+
+def _aggregate_events_to_records(
+    events: list[dict], enrich: _EnrichmentContext | None = None
+) -> list[CrisisRecord]:
     buckets = _cluster_events(events)
     records: list[CrisisRecord] = []
 
@@ -405,22 +434,29 @@ def _aggregate_events_to_records(events: list[dict]) -> list[CrisisRecord]:
         location_label = f"{top_admin1}, {top_country}" if top_admin1 else top_country
         name = f"{location_label} — {top_label}"
 
-        summary_parts: list[str] = [
-            f"{len(bucket)} ACLED-documented incidents clustered around "
-            f"{location_label} between {dates[0]} and {dates[-1]}."
-        ]
+        # Lead with the real incident, not the count. The representative ACLED
+        # note carries the actual news; the counts are context that follows.
+        summary_parts: list[str] = []
+        if rep_lede and rep_date:
+            summary_parts.append(f'"{rep_lede}" — {location_label}, {rep_date}.')
+        else:
+            summary_parts.append(
+                f"{len(bucket)} incidents reported around {location_label} "
+                f"between {dates[0]} and {dates[-1]}."
+            )
         if top_pair:
             summary_parts.append(
-                f"Principal actors reported: {top_pair[0]} and {top_pair[1]}."
+                f"Principal parties: {top_pair[0]} and {top_pair[1]}."
             )
         if rep_lede and rep_date:
             summary_parts.append(
-                f'Representative incident — "{rep_lede}" ({rep_date}).'
+                f"{len(bucket)} documented incidents, {dates[0]}–{dates[-1]};"
+                f" {fatalities} reported fatalities."
+                if fatalities > 0
+                else f"{len(bucket)} documented incidents, {dates[0]}–{dates[-1]}."
             )
-        if fatalities > 0:
-            summary_parts.append(
-                f"Reported fatalities across these events: {fatalities}."
-            )
+        elif fatalities > 0:
+            summary_parts.append(f"{fatalities} reported fatalities.")
         summary = " ".join(summary_parts)
 
         # Stable external_id via quantized centroid (0.5° grid, ~55 km).
@@ -435,8 +471,36 @@ def _aggregate_events_to_records(events: list[dict]) -> list[CrisisRecord]:
         slug = _slugify(f"{top_country}-{top_admin1 or 'area'}-{qlat}-{qlng}")
 
         sources = _build_sources(bucket)
-        actors = _build_actors(bucket, sources)
+        actors = _build_actors(bucket, sources, enrich)
         event_refs = _build_events(bucket)
+
+        # Append ReliefWeb situation reports (country-level) and the Wikipedia
+        # conflict background. Both are cached across the run so the same
+        # country isn't fetched 100 times.
+        if enrich is not None:
+            iso3 = _country_iso3(top_country)
+            if iso3:
+                sitreps = reliefweb.fetch_situation_reports(
+                    iso3, enrich.reliefweb_cache, client=enrich.reliefweb_client
+                )
+                sources.extend(sitreps)
+            bg_actors = [top_pair[0], top_pair[1]] if top_pair else []
+            bg_extract, bg_url = wikipedia.fetch_conflict_background(
+                top_country,
+                bg_actors,
+                enrich.background_cache,
+                client=enrich.wiki_client,
+            )
+            if bg_extract and bg_url:
+                sources.append(
+                    SourceRef(
+                        title=f"Background: {top_country}",
+                        url=bg_url,
+                        publisher="Wikipedia",
+                        source_type="reference",
+                        body_text=bg_extract,
+                    )
+                )
 
         records.append(
             CrisisRecord(
@@ -496,22 +560,42 @@ def _build_sources(bucket: list[dict]) -> list[SourceRef]:
 
 
 def _build_actors(
-    bucket: list[dict], sources: list[SourceRef]
+    bucket: list[dict],
+    sources: list[SourceRef],
+    enrich: _EnrichmentContext | None = None,
 ) -> list[ActorRef]:
-    names: dict[str, int] = {}
+    # Rank actors by frequency so the most central parties appear first and
+    # receive Wikipedia enrichment first (enrichment is capped per cluster).
+    name_counts: Counter[str] = Counter()
     for ev in bucket:
         for key in ("actor1", "actor2"):
             n = (ev.get(key) or "").strip()
-            if n and n not in names:
-                names[n] = 0
+            if n:
+                name_counts[n] += 1
+    ordered = [n for n, _ in name_counts.most_common()]
+
     actors: list[ActorRef] = []
-    for n in names:
+    enriched_count = 0
+    for n in ordered:
+        description: str | None = None
+        wiki_url: str | None = None
+        # Enrich the top 5 actors per cluster. Beyond that, descriptions add
+        # marginal value and the Wikipedia fetch budget matters for a 500-
+        # cluster run. The shared cache still helps for common actors.
+        if enrich is not None and enriched_count < 5:
+            description, wiki_url = wikipedia.fetch_actor_summary(
+                n, enrich.actor_cache, client=enrich.wiki_client
+            )
+            if description:
+                enriched_count += 1
         actors.append(
             ActorRef(
                 name=n,
                 type="other",
                 role="party",
-                attributing_source_index=0,  # attribute to the ACLED citation
+                description=description,
+                wikipedia_url=wiki_url,
+                attributing_source_index=0,
             )
         )
         if len(actors) >= 30:
@@ -539,4 +623,32 @@ class ACLEDSource(IngestionSource):
         with httpx.Client() as client:
             tok = _get_token(client)
             events = _fetch_events(client, tok.access_token)
-        return _aggregate_events_to_records(events)
+
+        # Shared clients + per-run caches so Wikipedia and ReliefWeb aren't
+        # hit redundantly across the ~500 clusters produced by DBSCAN.
+        wiki_client = httpx.Client(
+            timeout=httpx.Timeout(10.0, connect=5.0),
+            headers={
+                "User-Agent": "ConflictCoordinate/0.1 (https://github.com/emraany/conflict-coordinate)",
+                "Accept": "application/json",
+            },
+        )
+        reliefweb_client = httpx.Client(
+            timeout=httpx.Timeout(15.0, connect=5.0),
+            headers={
+                "User-Agent": "ConflictCoordinate/0.1 (https://github.com/emraany/conflict-coordinate)",
+                "Accept": "application/json",
+            },
+        )
+        enrich = _EnrichmentContext(
+            wiki_client=wiki_client,
+            actor_cache={},
+            background_cache={},
+            reliefweb_client=reliefweb_client,
+            reliefweb_cache={},
+        )
+        try:
+            return _aggregate_events_to_records(events, enrich)
+        finally:
+            wiki_client.close()
+            reliefweb_client.close()

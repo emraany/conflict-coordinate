@@ -54,10 +54,11 @@ export function EventTimeline({ events, sources }: Props) {
         listStyle: "none",
         display: "flex",
         flexDirection: "column",
-        gap: space.sm,
+        gap: 0,
       }}
     >
       {sorted.map((ev, i) => {
+        const isLast = i === sorted.length - 1;
         const num = String(i + 1).padStart(2, "0");
         const ref = sourceRefNumber(sources, ev.source_id);
         const isOpen = expanded.has(ev.id);
@@ -84,22 +85,55 @@ export function EventTimeline({ events, sources }: Props) {
             key={ev.id}
             style={{
               display: "flex",
-              gap: space.md,
-              paddingBottom: space.sm,
-              borderBottom: `1px dashed ${colors.rule}`,
+              gap: 0,
             }}
           >
-            <span
+            {/* Vertical line + dot column */}
+            <div
               style={{
-                color: colors.textDim,
-                fontFamily: fonts.mono,
-                fontSize: 11,
-                minWidth: 28,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                width: 28,
+                flexShrink: 0,
+                marginRight: space.md,
               }}
             >
-              [{num}]
-            </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
+              {/* Dot */}
+              <div
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  background: colors.oliveDim,
+                  border: `1px solid ${colors.oliveLight}`,
+                  flexShrink: 0,
+                  marginTop: 3,
+                  zIndex: 1,
+                }}
+              />
+              {/* Line segment below dot, runs to next item */}
+              {!isLast && (
+                <div
+                  style={{
+                    width: 1,
+                    flex: 1,
+                    background: colors.rule,
+                    marginTop: 3,
+                    marginBottom: 0,
+                  }}
+                />
+              )}
+            </div>
+
+            {/* Content */}
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                paddingBottom: space.md,
+              }}
+            >
               <div
                 style={{
                   display: "flex",
@@ -116,6 +150,15 @@ export function EventTimeline({ events, sources }: Props) {
                   }}
                 >
                   {formatDate(ev.occurred_at)}
+                </span>
+                <span
+                  style={{
+                    fontFamily: fonts.mono,
+                    fontSize: 9,
+                    color: colors.textDim,
+                  }}
+                >
+                  [{num}]
                 </span>
                 {ev.event_type && (
                   <span

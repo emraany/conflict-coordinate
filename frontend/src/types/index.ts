@@ -4,7 +4,14 @@
 export type CrisisStatus = "active" | "frozen" | "resolved";
 export type ActorRole = "party" | "mediator" | "observer" | "affected";
 export type ActorType = "state" | "non_state" | "coalition" | "other";
-export type SourceType = "news" | "report" | "academic" | "official" | "primary";
+export type SourceType =
+  | "news"
+  | "report"
+  | "academic"
+  | "official"
+  | "primary"
+  | "situation_report"
+  | "reference";
 
 export interface Actor {
   id: number;
@@ -26,6 +33,7 @@ export interface Source {
   retrieved_at: string | null;
   source_type: SourceType;
   origin: string | null;
+  body_text: string | null;
   created_at: string;
 }
 

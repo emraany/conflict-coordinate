@@ -202,6 +202,49 @@ export function CrisisDetailPanel({ slug, onClose }: Props) {
               </section>
             )}
 
+            {(() => {
+              const backgrounds = detail.sources.filter(
+                (s) => s.source_type === "reference" && s.body_text,
+              );
+              if (backgrounds.length === 0) return null;
+              const bg = backgrounds[0];
+              return (
+                <section style={{ marginBottom: space.lg }}>
+                  <SectionHeader>BACKGROUND</SectionHeader>
+                  <p
+                    className="serif"
+                    style={{
+                      margin: 0,
+                      fontSize: 13,
+                      lineHeight: 1.7,
+                      color: colors.text,
+                    }}
+                  >
+                    {bg.body_text}
+                  </p>
+                  <div
+                    className="label"
+                    style={{
+                      marginTop: space.xs,
+                      fontSize: 10,
+                      color: colors.textMuted,
+                    }}
+                  >
+                    Source:{" "}
+                    <a
+                      href={bg.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: colors.oliveLight }}
+                    >
+                      {bg.title}
+                    </a>
+                    {bg.publisher && ` · ${bg.publisher}`}
+                  </div>
+                </section>
+              );
+            })()}
+
             <section style={{ marginBottom: space.lg }}>
               <SectionHeader count={detail.actors.length}>
                 PARTIES INVOLVED
@@ -209,10 +252,65 @@ export function CrisisDetailPanel({ slug, onClose }: Props) {
               <ActorList actors={detail.actors} sources={detail.sources} />
             </section>
 
-            <section style={{ marginBottom: space.lg }}>
-              <SectionHeader count={detail.sources.length}>SOURCES</SectionHeader>
-              <SourceList sources={detail.sources} />
-            </section>
+            {(() => {
+              const sitreps = detail.sources.filter(
+                (s) => s.source_type === "situation_report" && s.body_text,
+              );
+              if (sitreps.length === 0) return null;
+              return (
+                <section style={{ marginBottom: space.lg }}>
+                  <SectionHeader count={sitreps.length}>FIELD REPORTS</SectionHeader>
+                  {sitreps.map((s) => (
+                    <div
+                      key={s.id}
+                      style={{
+                        marginBottom: space.md,
+                        paddingBottom: space.sm,
+                        borderBottom: `1px dashed ${colors.rule}`,
+                      }}
+                    >
+                      <a
+                        href={s.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="label"
+                        style={{
+                          color: colors.oliveLight,
+                          fontSize: 10,
+                          letterSpacing: "0.14em",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {s.title}
+                      </a>
+                      <p
+                        className="serif"
+                        style={{
+                          margin: `${space.xs}px 0 0 0`,
+                          fontSize: 13,
+                          lineHeight: 1.6,
+                          color: colors.text,
+                        }}
+                      >
+                        {s.body_text}
+                      </p>
+                      {s.publisher && (
+                        <div
+                          className="label"
+                          style={{
+                            marginTop: space.xs,
+                            fontSize: 10,
+                            color: colors.textMuted,
+                          }}
+                        >
+                          {s.publisher}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </section>
+              );
+            })()}
 
             {detail.events.length > 0 && (
               <section style={{ marginBottom: space.lg }}>
@@ -220,6 +318,20 @@ export function CrisisDetailPanel({ slug, onClose }: Props) {
                 <EventTimeline events={detail.events} sources={detail.sources} />
               </section>
             )}
+
+            {(() => {
+              const citedSources = detail.sources.filter(
+                (s) =>
+                  s.source_type !== "reference" &&
+                  s.source_type !== "situation_report",
+              );
+              return (
+                <section style={{ marginBottom: space.lg }}>
+                  <SectionHeader count={citedSources.length}>SOURCES</SectionHeader>
+                  <SourceList sources={citedSources} />
+                </section>
+              );
+            })()}
 
             <div
               className="label"

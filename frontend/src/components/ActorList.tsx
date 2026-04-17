@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { colors, fonts, space } from "../styles/tokens";
 import type { ActorLink, Source } from "../types";
 
@@ -28,6 +30,8 @@ function roleLabel(role: string): string {
 }
 
 export function ActorList({ actors, sources }: Props) {
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
   if (actors.length === 0) {
     return (
       <div className="label" style={{ color: colors.textDim }}>
@@ -35,6 +39,14 @@ export function ActorList({ actors, sources }: Props) {
       </div>
     );
   }
+
+  const toggle = (id: number) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   return (
     <ol
@@ -50,6 +62,23 @@ export function ActorList({ actors, sources }: Props) {
       {actors.map((link, i) => {
         const ref = sourceRefNumber(sources, link.source_id);
         const num = String(i + 1).padStart(2, "0");
+        const description = link.actor.description?.trim() || null;
+        const isOpen = expanded.has(link.actor.id);
+
+        const descStyle: React.CSSProperties = {
+          margin: `${space.xs}px 0 0 0`,
+          fontSize: 13,
+          lineHeight: 1.6,
+          color: colors.text,
+          cursor: description ? "pointer" : "default",
+        };
+        if (description && !isOpen) {
+          descStyle.display = "-webkit-box";
+          descStyle.WebkitBoxOrient = "vertical";
+          descStyle.WebkitLineClamp = 3;
+          descStyle.overflow = "hidden";
+        }
+
         return (
           <li
             key={`${link.actor.id}-${i}`}
@@ -70,7 +99,7 @@ export function ActorList({ actors, sources }: Props) {
             >
               [{num}]
             </span>
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <div
                 style={{
                   display: "flex",
@@ -79,7 +108,28 @@ export function ActorList({ actors, sources }: Props) {
                   alignItems: "baseline",
                 }}
               >
-                <span style={{ color: colors.text }}>{link.actor.name}</span>
+                <span style={{ color: colors.text, display: "flex", alignItems: "baseline", gap: space.xs, flexWrap: "wrap" }}>
+                  {link.actor.name}
+                  {link.actor.wikipedia_url && (
+                    <a
+                      href={link.actor.wikipedia_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Wikipedia"
+                      style={{
+                        fontFamily: fonts.mono,
+                        fontSize: 9,
+                        letterSpacing: "0.16em",
+                        color: colors.oliveLight,
+                        border: `1px solid ${colors.oliveDim}`,
+                        padding: "0 4px",
+                        textDecoration: "none",
+                      }}
+                    >
+                      [W]
+                    </a>
+                  )}
+                </span>
                 <span
                   className="label"
                   style={{ fontSize: 10, color: colors.oliveLight }}
@@ -101,6 +151,15 @@ export function ActorList({ actors, sources }: Props) {
                   </>
                 )}
               </div>
+              {description && (
+                <p
+                  className="serif"
+                  onClick={() => toggle(link.actor.id)}
+                  style={descStyle}
+                >
+                  {description}
+                </p>
+              )}
               {link.notes && (
                 <div
                   style={{
