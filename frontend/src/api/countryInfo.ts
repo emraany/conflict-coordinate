@@ -2,7 +2,7 @@ export interface CountryInfo {
   population: number;
   capital: string | null;
   borders: string[];
-  language: string | null;
+  languages: string[];
 }
 
 const _cache = new Map<string, CountryInfo | null>();
@@ -29,7 +29,7 @@ export async function fetchCountryInfo(countryName: string): Promise<CountryInfo
       population: c.population ?? 0,
       capital: Array.isArray(c.capital) && c.capital.length > 0 ? c.capital[0] : null,
       borders: Array.isArray(c.borders) ? c.borders : [],
-      language: c.languages ? Object.values(c.languages as Record<string, string>)[0] ?? null : null,
+      languages: c.languages ? Object.values(c.languages as Record<string, string>) : [],
     };
     _cache.set(key, info);
     return info;

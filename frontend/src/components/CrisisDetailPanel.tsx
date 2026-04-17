@@ -203,10 +203,12 @@ export function CrisisDetailPanel({ slug, onClose }: Props) {
                   <span>{formatPopulation(countryInfo.population)}</span>
                 </>
               )}
-              {countryInfo && countryInfo.language && (
+              {countryInfo && countryInfo.languages.length > 0 && (
                 <>
-                  <span className="label">Language</span>
-                  <span>{countryInfo.language}</span>
+                  <span className="label">
+                    {countryInfo.languages.length > 1 ? "Languages" : "Language"}
+                  </span>
+                  <span>{countryInfo.languages.join(", ")}</span>
                 </>
               )}
               {countryInfo && countryInfo.borders.length > 0 && (
