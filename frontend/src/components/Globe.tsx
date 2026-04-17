@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GlobeGL from "react-globe.gl";
 import type { GlobeMethods } from "react-globe.gl";
-import * as THREE from "three";
 
 import { colors, fonts, space, statusColor } from "../styles/tokens";
 import type { CrisisListItem } from "../types";
@@ -38,9 +37,9 @@ function readLocal<T extends string>(key: string, fallback: T): T {
   return (v as T) ?? fallback;
 }
 
-function makeMonoTextureFromColor(
+function makeMonoDataUrl(
   sourceUrl: string,
-  onReady: (tex: THREE.Texture) => void,
+  onReady: (dataUrl: string) => void,
 ) {
   const img = new Image();
   img.crossOrigin = "anonymous";
@@ -61,10 +60,7 @@ function makeMonoTextureFromColor(
       d[i + 2] = boosted;
     }
     ctx.putImageData(data, 0, 0);
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.needsUpdate = true;
-    onReady(tex);
+    onReady(canvas.toDataURL("image/jpeg", 0.9));
   };
   img.src = sourceUrl;
 }
@@ -140,7 +136,7 @@ function GlobeControlChips({
 
 export function Globe({ crises, onSelect, selectedSlug }: Props) {
   const ref = useRef<GlobeMethods | undefined>(undefined);
-  const monoTextureRef = useRef<THREE.Texture | null>(null);
+  const monoDataUrlRef = useRef<string | null>(null);
 
   const [textureMode, setTextureMode] = useState<TextureMode>(() =>
     readLocal<TextureMode>(LS_TEXTURE, "color"),
@@ -148,6 +144,7 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
   const [autoRotate, setAutoRotate] = useState<boolean>(
     () => readLocal(LS_AUTOROTATE, "false") === "true",
   );
+  const [activeTextureUrl, setActiveTextureUrl] = useState<string>(COLOR_TEXTURE);
 
   const points: PointDatum[] = useMemo(
     () =>
@@ -210,34 +207,20 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
     g.pointOfView({ lat: target.lat, lng: target.lng, altitude: 1.6 }, 900);
   }, [selectedSlug, crises]);
 
-  // Apply texture mode; build mono texture lazily on first toggle.
+  // Switch texture by updating the globeImageUrl prop (no THREE access needed).
   useEffect(() => {
-    const g = ref.current;
-    if (!g) return;
-    const mat = g.globeMaterial() as THREE.MeshPhongMaterial;
-    if (!mat) return;
     window.localStorage.setItem(LS_TEXTURE, textureMode);
-
     if (textureMode === "color") {
-      new THREE.TextureLoader().load(COLOR_TEXTURE, (tex) => {
-        tex.colorSpace = THREE.SRGBColorSpace;
-        mat.map = tex;
-        mat.needsUpdate = true;
-      });
+      setActiveTextureUrl(COLOR_TEXTURE);
       return;
     }
-    if (monoTextureRef.current) {
-      mat.map = monoTextureRef.current;
-      mat.needsUpdate = true;
+    if (monoDataUrlRef.current) {
+      setActiveTextureUrl(monoDataUrlRef.current);
       return;
     }
-    makeMonoTextureFromColor(COLOR_TEXTURE, (tex) => {
-      monoTextureRef.current = tex;
-      if (ref.current) {
-        const m = ref.current.globeMaterial() as THREE.MeshPhongMaterial;
-        m.map = tex;
-        m.needsUpdate = true;
-      }
+    makeMonoDataUrl(COLOR_TEXTURE, (dataUrl) => {
+      monoDataUrlRef.current = dataUrl;
+      setActiveTextureUrl(dataUrl);
     });
   }, [textureMode]);
 
@@ -250,7 +233,7 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
       <GlobeGL
         ref={ref}
         backgroundColor="rgba(0,0,0,0)"
-        globeImageUrl={COLOR_TEXTURE}
+        globeImageUrl={activeTextureUrl}
         bumpImageUrl={BUMP_TEXTURE}
         showAtmosphere={true}
         atmosphereColor={colors.olive}
