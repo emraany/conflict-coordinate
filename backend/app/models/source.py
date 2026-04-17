@@ -36,6 +36,7 @@ class Source(Base):
     source_type: Mapped[SourceType] = mapped_column(
         Enum(SourceType, name="source_type"), default=SourceType.news
     )
+    origin: Mapped[str | None] = mapped_column(String(40), index=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

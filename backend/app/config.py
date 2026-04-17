@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     cors_origins: str = Field(default="http://localhost:5173")
     acled_username: str = Field(default="")
     acled_password: str = Field(default="")
+    acled_enabled: bool = Field(default=False)
+    acled_lookback_days: int = Field(default=90)
+    acled_crisis_event_threshold: int = Field(default=10)
+    gdelt_enabled: bool = Field(default=False)
+    gdelt_attach_radius_km: int = Field(default=300)
+    gdelt_lookback_minutes: int = Field(default=180)
 
     model_config = SettingsConfigDict(
         env_file=(REPO_ROOT / ".env"),

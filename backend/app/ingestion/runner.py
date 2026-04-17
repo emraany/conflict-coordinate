@@ -17,6 +17,7 @@ from app.db import SessionLocal
 from app.ingestion.acled import ACLEDSource
 from app.ingestion.base import ActorRef, CrisisRecord, IngestionSource, SourceRef
 from app.ingestion.fixture import FixtureSource
+from app.ingestion.gdelt import GDELTSource
 from app.models import (
     Actor,
     ActorRole,
@@ -31,6 +32,7 @@ from app.models import (
 SOURCES: list[IngestionSource] = [
     FixtureSource(),
     ACLEDSource(),
+    GDELTSource(),
 ]
 
 
@@ -54,7 +56,9 @@ def _upsert_actor(db: Session, ref: ActorRef) -> Actor:
     return actor
 
 
-def _replace_sources(db: Session, crisis: Crisis, refs: list[SourceRef]) -> list[Source]:
+def _replace_sources(
+    db: Session, crisis: Crisis, refs: list[SourceRef], origin: str
+) -> list[Source]:
     # Clear existing ingestion-owned sources for this crisis and re-insert.
     for existing in list(crisis.sources):
         db.delete(existing)
@@ -69,6 +73,7 @@ def _replace_sources(db: Session, crisis: Crisis, refs: list[SourceRef]) -> list
             published_at=ref.published_at,
             retrieved_at=datetime.now(timezone.utc),
             source_type=SourceType(ref.source_type),
+            origin=origin,
         )
         db.add(src)
         created.append(src)
@@ -150,15 +155,26 @@ def _upsert_crisis(db: Session, source_name: str, rec: CrisisRecord) -> tuple[Cr
 def run_all_sources(db: Session | None = None) -> dict:
     close_after = db is None
     db = db or SessionLocal()
-    result = {"sources": [], "total_inserted": 0, "total_updated": 0}
+    result: dict = {"sources": [], "total_inserted": 0, "total_updated": 0}
     try:
         for source in SOURCES:
+            if getattr(source, "attach_only", False):
+                counts = source.attach_events(db)
+                db.commit()
+                result["sources"].append(
+                    {
+                        "source": source.name,
+                        "attached": counts.get("attached", 0),
+                        "skipped": counts.get("skipped", 0),
+                    }
+                )
+                continue
             records = source.fetch()
             inserted = 0
             updated = 0
             for rec in records:
                 crisis, created = _upsert_crisis(db, source.name, rec)
-                source_rows = _replace_sources(db, crisis, rec.sources)
+                source_rows = _replace_sources(db, crisis, rec.sources, source.name)
                 _replace_actor_links(db, crisis, rec.actors, source_rows)
                 if created:
                     inserted += 1

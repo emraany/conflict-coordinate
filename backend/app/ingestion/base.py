@@ -56,6 +56,12 @@ class CrisisRecord:
 
 class IngestionSource(ABC):
     name: str
+    # If True, the runner calls `attach_events(db)` instead of upserting
+    # crises. Used for secondary sources (GDELT) that only add events.
+    attach_only: bool = False
 
     @abstractmethod
     def fetch(self) -> list[CrisisRecord]: ...
+
+    def attach_events(self, db) -> dict:  # type: ignore[no-untyped-def]
+        return {"attached": 0, "skipped": 0}

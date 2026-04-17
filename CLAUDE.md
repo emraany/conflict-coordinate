@@ -8,7 +8,7 @@ Neutral platform that visualizes active global conflicts on an interactive 3D gl
 - **Database:** PostgreSQL 16 + PostGIS (via Docker Compose locally)
 - **Frontend:** Vite · React 18 · TypeScript · `react-globe.gl`
 - **Admin auth:** single `ADMIN_TOKEN` env var, sent as `X-Admin-Token` header
-- **Ingestion:** pluggable `IngestionSource` ABC. v1 has `FixtureSource` (seed data) and an `ACLEDSource` stub.
+- **Ingestion:** pluggable `IngestionSource` ABC. Sources: `FixtureSource` (seed data), `ACLEDSource` (real OAuth + event aggregation), `GDELTSource` (supplementary event stream, attach-only).
 
 ## Repo layout
 
@@ -52,7 +52,7 @@ Before running the backend, copy `.env.example` to `.env` at the repo root and s
 
 "Situation-room briefing" — modern reinterpretation of a declassified typewritten document. Design tokens live in `frontend/src/styles/tokens.ts`.
 
-- Palette: background `#0b0d10`, text `#e8dcc4`, muted `#8a8578`, rules `#2a2d33`, alert `#b3332a`, amber `#c8a96a`, olive `#5a6358`
+- Palette: bg `#2e3338` (gunmetal), bgRaised `#3a4048`, text `#e8dcc4`, muted `#a8a294`, rules `#525862`, active `#a64a3a` (softened red, markers only), olive `#6b7354` (primary chrome), oliveLight `#8a9070`, oliveDim `#4a523c`
 - Fonts: **IBM Plex Mono** (body), **Special Elite** (document headers, sparingly), **IBM Plex Serif** (summary prose)
 - Chrome: document-style header, dossier-framed detail panel, bracketed status chips (`[ ACTIVE ]`), numeric list refs (`[01]`)
 - No skeuomorphic paper textures. Crisp hairlines, generous whitespace, 120–180ms fades only.
@@ -65,9 +65,25 @@ Before running the backend, copy `.env.example` to `.env` at the repo root and s
 - Never force-push `main`. Never `--no-verify`.
 - If a pre-commit hook fails, fix the cause and make a new commit (don't amend).
 
+## Ingestion config
+
+All flags default to `false`/empty — fixture data works standalone.
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `ACLED_ENABLED` | `false` | Enable ACLED ingestion |
+| `ACLED_USERNAME` | `""` | ACLED OAuth username |
+| `ACLED_PASSWORD` | `""` | ACLED OAuth password |
+| `ACLED_LOOKBACK_DAYS` | `90` | How far back to fetch events |
+| `ACLED_CRISIS_EVENT_THRESHOLD` | `10` | Min events to create a country-year crisis |
+| `GDELT_ENABLED` | `false` | Enable GDELT supplementary stream |
+| `GDELT_ATTACH_RADIUS_KM` | `300` | Max distance to attach event to crisis |
+| `GDELT_LOOKBACK_MINUTES` | `180` | How many minutes of GDELT exports to fetch |
+
+ACLED OAuth tokens cached at `backend/.cache/acled_token.json` (gitignored).
+
 ## Deliberately out of scope (don't add without asking)
 
-- Live ACLED ingestion (stub only until credentials are provided)
 - ML classification, summarization, forecasting
 - Multi-user admin, audit logs, edit history
 - Public-facing authentication

@@ -14,6 +14,11 @@ function formatDate(iso: string | null): string | null {
   }
 }
 
+function originLabel(origin: string | null): string {
+  if (!origin) return "CURATED";
+  return origin.toUpperCase();
+}
+
 export function SourceList({ sources }: Props) {
   if (sources.length === 0) {
     return (
@@ -57,17 +62,41 @@ export function SourceList({ sources }: Props) {
               §{num}
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <a
-                href={s.url}
-                target="_blank"
-                rel="noopener noreferrer"
+              <div
                 style={{
-                  color: colors.text,
-                  wordBreak: "break-word",
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: space.sm,
+                  flexWrap: "wrap",
                 }}
               >
-                {s.title}
-              </a>
+                <a
+                  href={s.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    color: colors.text,
+                    wordBreak: "break-word",
+                    flex: 1,
+                  }}
+                >
+                  {s.title}
+                </a>
+                <span
+                  style={{
+                    fontFamily: fonts.mono,
+                    fontSize: 9,
+                    letterSpacing: "0.16em",
+                    color: colors.oliveLight,
+                    background: colors.bgSunken,
+                    border: `1px solid ${colors.oliveDim}`,
+                    padding: "1px 6px",
+                    flexShrink: 0,
+                  }}
+                >
+                  [{originLabel(s.origin)}]
+                </span>
+              </div>
               <div
                 className="label"
                 style={{ marginTop: 2, fontSize: 10, color: colors.textMuted }}

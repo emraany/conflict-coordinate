@@ -25,6 +25,7 @@ export interface Source {
   published_at: string | null;
   retrieved_at: string | null;
   source_type: SourceType;
+  origin: string | null;
   created_at: string;
 }
 

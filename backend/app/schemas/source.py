@@ -12,6 +12,7 @@ class SourceBase(BaseModel):
     published_at: datetime | None = None
     retrieved_at: datetime | None = None
     source_type: SourceType = SourceType.news
+    origin: str | None = None
 
 
 class SourceCreate(SourceBase):
