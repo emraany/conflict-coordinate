@@ -69,6 +69,14 @@ export interface CrisisListItem {
   conflict_type: string | null;
 }
 
+export interface CrisisStats {
+  total_events: number;
+  total_fatalities: number;
+  event_type_counts: Record<string, number>;
+  first_event_at: string | null;
+  last_event_at: string | null;
+}
+
 export interface CrisisDetail {
   id: number;
   slug: string;
@@ -89,6 +97,7 @@ export interface CrisisDetail {
   actors: ActorLink[];
   sources: Source[];
   events: CrisisEvent[];
+  stats: CrisisStats;
 }
 
 export interface IngestSummary {

@@ -11,12 +11,37 @@ from app.schemas import (
     CrisisCreate,
     CrisisDetail,
     CrisisListItem,
+    CrisisStats,
     CrisisUpdate,
     SourceCreate,
     SourceOut,
 )
 
 router = APIRouter(prefix="/api/crises", tags=["crises"])
+
+
+def _compute_stats(events) -> CrisisStats:  # type: ignore[no-untyped-def]
+    from collections import Counter
+    type_counts: Counter = Counter()
+    total_fatalities = 0
+    first_at = None
+    last_at = None
+    for ev in events:
+        if ev.event_type:
+            type_counts[ev.event_type] += 1
+        total_fatalities += ev.fatalities or 0
+        if ev.occurred_at:
+            if first_at is None or ev.occurred_at < first_at:
+                first_at = ev.occurred_at
+            if last_at is None or ev.occurred_at > last_at:
+                last_at = ev.occurred_at
+    return CrisisStats(
+        total_events=len(events),
+        total_fatalities=total_fatalities,
+        event_type_counts=dict(type_counts.most_common()),
+        first_event_at=first_at,
+        last_event_at=last_at,
+    )
 
 
 def _load_crisis_detail(db: Session, crisis: Crisis) -> CrisisDetail:
@@ -31,10 +56,11 @@ def _load_crisis_detail(db: Session, crisis: Crisis) -> CrisisDetail:
     ]
     return CrisisDetail.model_validate(
         {
-            **{k: getattr(crisis, k) for k in CrisisDetail.model_fields if k not in {"actors", "sources", "events"}},
+            **{k: getattr(crisis, k) for k in CrisisDetail.model_fields if k not in {"actors", "sources", "events", "stats"}},
             "actors": actor_links,
             "sources": crisis.sources,
             "events": sorted(crisis.events, key=lambda e: e.occurred_at, reverse=True)[:50],
+            "stats": _compute_stats(crisis.events),
         }
     )
 

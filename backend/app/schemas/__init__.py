@@ -5,6 +5,7 @@ from app.schemas.crisis import (
     CrisisCreate,
     CrisisDetail,
     CrisisListItem,
+    CrisisStats,
     CrisisUpdate,
 )
 from app.schemas.event import CrisisEventOut
@@ -20,6 +21,7 @@ __all__ = [
     "CrisisDetail",
     "CrisisEventOut",
     "CrisisListItem",
+    "CrisisStats",
     "CrisisUpdate",
     "SourceCreate",
     "SourceOut",

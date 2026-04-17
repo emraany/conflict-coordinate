@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 
 import { api, ApiError } from "../api/client";
+import { fetchCountryInfo, formatPopulation } from "../api/countryInfo";
+import type { CountryInfo } from "../api/countryInfo";
 import { colors, fonts, space } from "../styles/tokens";
 import type { CrisisDetail } from "../types";
 import { ActorList } from "./ActorList";
@@ -52,6 +54,12 @@ export function CrisisDetailPanel({ slug, onClose }: Props) {
   const [detail, setDetail] = useState<CrisisDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [countryInfo, setCountryInfo] = useState<CountryInfo | null>(null);
+
+  useEffect(() => {
+    if (!detail?.country) { setCountryInfo(null); return; }
+    fetchCountryInfo(detail.country).then(setCountryInfo);
+  }, [detail?.country]);
 
   useEffect(() => {
     if (!slug) return;
@@ -183,7 +191,80 @@ export function CrisisDetailPanel({ slug, onClose }: Props) {
               <span>
                 {detail.lat.toFixed(3)}, {detail.lng.toFixed(3)}
               </span>
+              {countryInfo && countryInfo.capital && (
+                <>
+                  <span className="label">Capital</span>
+                  <span>{countryInfo.capital}</span>
+                </>
+              )}
+              {countryInfo && countryInfo.population > 0 && (
+                <>
+                  <span className="label">Population</span>
+                  <span>{formatPopulation(countryInfo.population)}</span>
+                </>
+              )}
+              {countryInfo && countryInfo.language && (
+                <>
+                  <span className="label">Language</span>
+                  <span>{countryInfo.language}</span>
+                </>
+              )}
+              {countryInfo && countryInfo.borders.length > 0 && (
+                <>
+                  <span className="label">Borders</span>
+                  <span
+                    style={{
+                      fontFamily: fonts.mono,
+                      fontSize: 11,
+                      letterSpacing: "0.08em",
+                      color: colors.textMuted,
+                    }}
+                  >
+                    {countryInfo.borders.join(" · ")}
+                  </span>
+                </>
+              )}
             </div>
+
+            {detail.stats.total_events > 0 && (
+              <div
+                style={{
+                  marginBottom: space.lg,
+                  padding: `${space.sm}px ${space.md}px`,
+                  background: colors.bgSunken,
+                  border: `1px solid ${colors.rule}`,
+                  fontFamily: fonts.mono,
+                  fontSize: 11,
+                  color: colors.textMuted,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: `${space.xs}px ${space.lg}px`,
+                  lineHeight: 1.6,
+                }}
+              >
+                <span>
+                  <span style={{ color: colors.text }}>{detail.stats.total_events}</span>
+                  {" "}incidents
+                </span>
+                {detail.stats.total_fatalities > 0 && (
+                  <span>
+                    <span style={{ color: colors.active }}>†</span>
+                    {" "}
+                    <span style={{ color: colors.text }}>{detail.stats.total_fatalities.toLocaleString()}</span>
+                    {" "}fatalities
+                  </span>
+                )}
+                {Object.entries(detail.stats.event_type_counts)
+                  .slice(0, 3)
+                  .map(([type, count]) => (
+                    <span key={type}>
+                      <span style={{ color: colors.oliveLight }}>{type}</span>
+                      {" "}
+                      <span style={{ color: colors.textDim }}>[{count}]</span>
+                    </span>
+                  ))}
+              </div>
+            )}
 
             {detail.summary && (
               <section style={{ marginBottom: space.lg }}>

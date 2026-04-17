@@ -8,6 +8,14 @@ from app.schemas.event import CrisisEventOut
 from app.schemas.source import SourceOut
 
 
+class CrisisStats(BaseModel):
+    total_events: int
+    total_fatalities: int
+    event_type_counts: dict[str, int]
+    first_event_at: datetime | None
+    last_event_at: datetime | None
+
+
 class CrisisBase(BaseModel):
     slug: str = Field(min_length=1, max_length=120, pattern=r"^[a-z0-9-]+$")
     name: str = Field(min_length=1, max_length=200)
@@ -80,3 +88,4 @@ class CrisisDetail(CrisisBase):
     actors: list[ActorLinkOut]
     sources: list[SourceOut]
     events: list[CrisisEventOut]
+    stats: CrisisStats
