@@ -73,22 +73,6 @@ function makeMonoDataUrl(
   img.src = sourceUrl;
 }
 
-function makeCapitalElement(cap: CapitalDatum): HTMLElement {
-  const el = document.createElement("div");
-  el.style.cssText = `
-    font-family: ${fonts.mono};
-    text-align: center;
-    pointer-events: none;
-    user-select: none;
-    transform: translate(-50%, -50%);
-  `;
-  el.innerHTML = `
-    <div style="font-size:10px;color:${colors.amberReserved};line-height:1;text-shadow:0 1px 3px rgba(0,0,0,0.9);">★</div>
-    <div style="font-size:7px;color:${colors.textMuted};white-space:nowrap;letter-spacing:0.08em;text-shadow:0 1px 3px rgba(0,0,0,0.9);margin-top:1px;">${cap.name}</div>
-  `;
-  return el;
-}
-
 function GlobeControlChips({
   textureMode,
   autoRotate,
@@ -199,6 +183,16 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
     [crises],
   );
 
+  const displayedCountries = useMemo<object[]>(
+    () => (showBorders ? countriesGeo : []),
+    [showBorders, countriesGeo],
+  );
+
+  const displayedCapitals = useMemo<CapitalDatum[]>(
+    () => (showBorders ? capitals : []),
+    [showBorders, capitals],
+  );
+
   const rings: RingDatum[] = useMemo(
     () =>
       crises
@@ -238,12 +232,15 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
             capital.length > 0 &&
             capitalInfo?.latlng?.length === 2
           ) {
-            caps.push({
-              name: capital[0],
-              country: name?.common ?? "",
-              lat: capitalInfo.latlng[0],
-              lng: capitalInfo.latlng[1],
-            });
+            const [lat, lng] = capitalInfo.latlng;
+            if (typeof lat === "number" && typeof lng === "number" && !(lat === 0 && lng === 0)) {
+              caps.push({
+                name: capital[0],
+                country: name?.common ?? "",
+                lat,
+                lng,
+              });
+            }
           }
         }
         setCapitals(caps);
@@ -326,7 +323,7 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
         atmosphereColor={colors.olive}
         atmosphereAltitude={textureMode === "color" ? 0.15 : 0.12}
         // Country border polygons
-        polygonsData={showBorders ? countriesGeo : []}
+        polygonsData={displayedCountries}
         polygonCapColor={() => "rgba(0,0,0,0)"}
         polygonSideColor={() => "rgba(0,0,0,0)"}
         polygonStrokeColor={() => colors.oliveDim}
@@ -345,12 +342,16 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
               ">${name}</div>`
             : "";
         }}
-        // Capital city stars
-        htmlElementsData={showBorders ? capitals : []}
-        htmlLat={(d: object) => (d as CapitalDatum).lat}
-        htmlLng={(d: object) => (d as CapitalDatum).lng}
-        htmlAltitude={0.01}
-        htmlElement={(d: object) => makeCapitalElement(d as CapitalDatum)}
+        // Capital city labels (GPU-rendered via three-spritetext)
+        labelsData={displayedCapitals}
+        labelLat={(d: object) => (d as CapitalDatum).lat}
+        labelLng={(d: object) => (d as CapitalDatum).lng}
+        labelText={(d: object) => (d as CapitalDatum).name}
+        labelSize={0.22}
+        labelDotRadius={0.14}
+        labelColor={() => colors.amberReserved}
+        labelResolution={2}
+        labelAltitude={0.008}
         // Crisis dots
         pointsData={points}
         pointLat={(d) => (d as PointDatum).lat}
