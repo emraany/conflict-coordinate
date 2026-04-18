@@ -326,7 +326,7 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
         polygonsData={displayedCountries}
         polygonCapColor={() => "rgba(0,0,0,0)"}
         polygonSideColor={() => "rgba(0,0,0,0)"}
-        polygonStrokeColor={() => colors.oliveDim}
+        polygonStrokeColor={() => colors.oliveLight}
         polygonAltitude={0.005}
         polygonLabel={(d: object) => {
           const name = (d as { properties?: { NAME?: string } }).properties?.NAME ?? "";
@@ -342,16 +342,24 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
               ">${name}</div>`
             : "";
         }}
-        // Capital city stars (GPU-rendered via three-spritetext)
-        labelsData={displayedCapitals}
-        labelLat={(d: object) => (d as CapitalDatum).lat}
-        labelLng={(d: object) => (d as CapitalDatum).lng}
-        labelText={() => "★"}
-        labelSize={0.55}
-        labelDotRadius={0}
-        labelColor={() => colors.amberReserved}
-        labelResolution={2}
-        labelAltitude={0.008}
+        // Capital city stars — htmlElementsData so the browser renders ★ correctly
+        htmlElementsData={displayedCapitals}
+        htmlLat={(d: object) => (d as CapitalDatum).lat}
+        htmlLng={(d: object) => (d as CapitalDatum).lng}
+        htmlAltitude={0.01}
+        htmlElement={(d: object) => {
+          const el = document.createElement("div");
+          el.style.cssText = `
+            pointer-events:none;
+            font-size:13px;
+            line-height:1;
+            transform:translate(-50%,-50%);
+            text-shadow:0 0 6px rgba(0,0,0,0.95);
+          `;
+          el.style.color = colors.amberReserved;
+          el.textContent = "★";
+          return el;
+        }}
         // Crisis dots
         pointsData={points}
         pointLat={(d) => (d as PointDatum).lat}
