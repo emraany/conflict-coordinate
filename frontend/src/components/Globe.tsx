@@ -342,13 +342,13 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
               ">${name}</div>`
             : "";
         }}
-        // Capital city labels (GPU-rendered via three-spritetext)
+        // Capital city stars (GPU-rendered via three-spritetext)
         labelsData={displayedCapitals}
         labelLat={(d: object) => (d as CapitalDatum).lat}
         labelLng={(d: object) => (d as CapitalDatum).lng}
-        labelText={(d: object) => (d as CapitalDatum).name}
-        labelSize={0.22}
-        labelDotRadius={0.14}
+        labelText={() => "★"}
+        labelSize={0.55}
+        labelDotRadius={0}
         labelColor={() => colors.amberReserved}
         labelResolution={2}
         labelAltitude={0.008}
