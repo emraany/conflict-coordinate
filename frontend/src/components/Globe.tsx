@@ -23,13 +23,6 @@ interface RingDatum {
   repeatPeriod: number;
 }
 
-interface CapitalDatum {
-  name: string;
-  country: string;
-  lat: number;
-  lng: number;
-}
-
 type TextureMode = "color" | "mono";
 
 const COLOR_TEXTURE = "//unpkg.com/three-globe/example/img/earth-blue-marble.jpg";
@@ -172,7 +165,6 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
   );
   const [activeTextureUrl, setActiveTextureUrl] = useState<string>(COLOR_TEXTURE);
   const [countriesGeo, setCountriesGeo] = useState<object[]>([]);
-  const [capitals, setCapitals] = useState<CapitalDatum[]>([]);
 
   const points: PointDatum[] = useMemo(
     () =>
@@ -186,11 +178,6 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
   const displayedCountries = useMemo<object[]>(
     () => (showBorders ? countriesGeo : []),
     [showBorders, countriesGeo],
-  );
-
-  const displayedCapitals = useMemo<CapitalDatum[]>(
-    () => (showBorders ? capitals : []),
-    [showBorders, capitals],
   );
 
   const rings: RingDatum[] = useMemo(
@@ -212,39 +199,6 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
     fetch("/geo/countries.geojson")
       .then((r) => r.json())
       .then((d) => setCountriesGeo((d.features ?? []) as object[]))
-      .catch(() => {});
-  }, []);
-
-  // Load capital cities from REST Countries (capitalInfo includes lat/lng).
-  useEffect(() => {
-    fetch(
-      "https://restcountries.com/v3.1/all?fields=capital,capitalInfo,name",
-    )
-      .then((r) => r.json())
-      .then((data: unknown[]) => {
-        const caps: CapitalDatum[] = [];
-        for (const c of data as Record<string, unknown>[]) {
-          const capital = c.capital as string[] | undefined;
-          const capitalInfo = c.capitalInfo as { latlng?: number[] } | undefined;
-          const name = c.name as { common?: string } | undefined;
-          if (
-            Array.isArray(capital) &&
-            capital.length > 0 &&
-            capitalInfo?.latlng?.length === 2
-          ) {
-            const [lat, lng] = capitalInfo.latlng;
-            if (typeof lat === "number" && typeof lng === "number" && !(lat === 0 && lng === 0)) {
-              caps.push({
-                name: capital[0],
-                country: name?.common ?? "",
-                lat,
-                lng,
-              });
-            }
-          }
-        }
-        setCapitals(caps);
-      })
       .catch(() => {});
   }, []);
 
@@ -326,7 +280,7 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
         polygonsData={displayedCountries}
         polygonCapColor={() => "rgba(0,0,0,0)"}
         polygonSideColor={() => "rgba(0,0,0,0)"}
-        polygonStrokeColor={() => colors.oliveLight}
+        polygonStrokeColor={() => colors.textMuted}
         polygonAltitude={0.005}
         polygonLabel={(d: object) => {
           const name = (d as { properties?: { NAME?: string } }).properties?.NAME ?? "";
@@ -342,15 +296,6 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
               ">${name}</div>`
             : "";
         }}
-        // Capital city dots (GPU sphere, amber — distinct from crisis markers)
-        labelsData={displayedCapitals}
-        labelLat={(d: object) => (d as CapitalDatum).lat}
-        labelLng={(d: object) => (d as CapitalDatum).lng}
-        labelText={() => ""}
-        labelDotRadius={0.28}
-        labelDotOrientation={() => "bottom" as const}
-        labelColor={() => colors.amberReserved}
-        labelAltitude={0.008}
         // Crisis dots
         pointsData={points}
         pointLat={(d) => (d as PointDatum).lat}
