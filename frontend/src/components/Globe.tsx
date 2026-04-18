@@ -342,24 +342,15 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
               ">${name}</div>`
             : "";
         }}
-        // Capital city stars — htmlElementsData so the browser renders ★ correctly
-        htmlElementsData={displayedCapitals}
-        htmlLat={(d: object) => (d as CapitalDatum).lat}
-        htmlLng={(d: object) => (d as CapitalDatum).lng}
-        htmlAltitude={0.01}
-        htmlElement={(d: object) => {
-          const el = document.createElement("div");
-          el.style.cssText = `
-            pointer-events:none;
-            font-size:13px;
-            line-height:1;
-            transform:translate(-50%,-50%);
-            text-shadow:0 0 6px rgba(0,0,0,0.95);
-          `;
-          el.style.color = colors.amberReserved;
-          el.textContent = "★";
-          return el;
-        }}
+        // Capital city dots (GPU sphere, amber — distinct from crisis markers)
+        labelsData={displayedCapitals}
+        labelLat={(d: object) => (d as CapitalDatum).lat}
+        labelLng={(d: object) => (d as CapitalDatum).lng}
+        labelText={() => ""}
+        labelDotRadius={0.28}
+        labelDotOrientation={() => "bottom" as const}
+        labelColor={() => colors.amberReserved}
+        labelAltitude={0.008}
         // Crisis dots
         pointsData={points}
         pointLat={(d) => (d as PointDatum).lat}
