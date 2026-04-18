@@ -301,7 +301,7 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
         pointLat={(d) => (d as PointDatum).lat}
         pointLng={(d) => (d as PointDatum).lng}
         pointColor={(d) => (d as PointDatum).__color}
-        pointAltitude={0.018}
+        pointAltitude={0.006}
         pointRadius={0.35}
         pointsMerge={false}
         pointLabel={(d) => {
