@@ -23,6 +23,13 @@ interface RingDatum {
   repeatPeriod: number;
 }
 
+interface CapitalDatum {
+  name: string;
+  country: string;
+  lat: number;
+  lng: number;
+}
+
 type TextureMode = "color" | "mono";
 
 const COLOR_TEXTURE = "//unpkg.com/three-globe/example/img/earth-blue-marble.jpg";
@@ -30,6 +37,7 @@ const BUMP_TEXTURE = "//unpkg.com/three-globe/example/img/earth-topology.png";
 
 const LS_TEXTURE = "cc.globe.texture";
 const LS_AUTOROTATE = "cc.globe.autoRotate";
+const LS_BORDERS = "cc.globe.borders";
 
 function readLocal<T extends string>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -65,17 +73,37 @@ function makeMonoDataUrl(
   img.src = sourceUrl;
 }
 
+function makeCapitalElement(cap: CapitalDatum): HTMLElement {
+  const el = document.createElement("div");
+  el.style.cssText = `
+    font-family: ${fonts.mono};
+    text-align: center;
+    pointer-events: none;
+    user-select: none;
+    transform: translate(-50%, -50%);
+  `;
+  el.innerHTML = `
+    <div style="font-size:10px;color:${colors.amberReserved};line-height:1;text-shadow:0 1px 3px rgba(0,0,0,0.9);">★</div>
+    <div style="font-size:7px;color:${colors.textMuted};white-space:nowrap;letter-spacing:0.08em;text-shadow:0 1px 3px rgba(0,0,0,0.9);margin-top:1px;">${cap.name}</div>
+  `;
+  return el;
+}
+
 function GlobeControlChips({
   textureMode,
   autoRotate,
+  showBorders,
   onToggleTexture,
   onToggleAutoRotate,
+  onToggleBorders,
   onResetView,
 }: {
   textureMode: TextureMode;
   autoRotate: boolean;
+  showBorders: boolean;
   onToggleTexture: () => void;
   onToggleAutoRotate: () => void;
+  onToggleBorders: () => void;
   onResetView: () => void;
 }) {
   const chipStyle = {
@@ -100,6 +128,17 @@ function GlobeControlChips({
         zIndex: 2,
       }}
     >
+      <button
+        type="button"
+        onClick={onToggleBorders}
+        style={{
+          ...chipStyle,
+          color: showBorders ? colors.oliveLight : colors.textMuted,
+        }}
+        title="Toggle country borders and capitals"
+      >
+        [ BORDERS {showBorders ? "ON" : "OFF"} ]
+      </button>
       <button
         type="button"
         onClick={onToggleTexture}
@@ -144,7 +183,12 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
   const [autoRotate, setAutoRotate] = useState<boolean>(
     () => readLocal(LS_AUTOROTATE, "false") === "true",
   );
+  const [showBorders, setShowBorders] = useState<boolean>(
+    () => readLocal(LS_BORDERS, "true") === "true",
+  );
   const [activeTextureUrl, setActiveTextureUrl] = useState<string>(COLOR_TEXTURE);
+  const [countriesGeo, setCountriesGeo] = useState<object[]>([]);
+  const [capitals, setCapitals] = useState<CapitalDatum[]>([]);
 
   const points: PointDatum[] = useMemo(
     () =>
@@ -169,11 +213,49 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
     [crises],
   );
 
+  // Load country borders GeoJSON from bundled static file.
+  useEffect(() => {
+    fetch("/geo/countries.geojson")
+      .then((r) => r.json())
+      .then((d) => setCountriesGeo((d.features ?? []) as object[]))
+      .catch(() => {});
+  }, []);
+
+  // Load capital cities from REST Countries (capitalInfo includes lat/lng).
+  useEffect(() => {
+    fetch(
+      "https://restcountries.com/v3.1/all?fields=capital,capitalInfo,name",
+    )
+      .then((r) => r.json())
+      .then((data: unknown[]) => {
+        const caps: CapitalDatum[] = [];
+        for (const c of data as Record<string, unknown>[]) {
+          const capital = c.capital as string[] | undefined;
+          const capitalInfo = c.capitalInfo as { latlng?: number[] } | undefined;
+          const name = c.name as { common?: string } | undefined;
+          if (
+            Array.isArray(capital) &&
+            capital.length > 0 &&
+            capitalInfo?.latlng?.length === 2
+          ) {
+            caps.push({
+              name: capital[0],
+              country: name?.common ?? "",
+              lat: capitalInfo.latlng[0],
+              lng: capitalInfo.latlng[1],
+            });
+          }
+        }
+        setCapitals(caps);
+      })
+      .catch(() => {});
+  }, []);
+
   // Apply OrbitControls tuning once.
   useEffect(() => {
     const g = ref.current;
     if (!g) return;
-    const c = g.controls() as any;
+    const c = g.controls() as Record<string, unknown>;
     c.enablePan = true;
     c.enableDamping = true;
     c.dampingFactor = 0.12;
@@ -192,11 +274,16 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
   useEffect(() => {
     const g = ref.current;
     if (!g) return;
-    const c = g.controls() as any;
+    const c = g.controls() as Record<string, unknown>;
     c.autoRotate = autoRotate;
     c.autoRotateSpeed = 0.25;
     window.localStorage.setItem(LS_AUTOROTATE, String(autoRotate));
   }, [autoRotate]);
+
+  // Persist borders toggle.
+  useEffect(() => {
+    window.localStorage.setItem(LS_BORDERS, String(showBorders));
+  }, [showBorders]);
 
   // Fly to selected crisis.
   useEffect(() => {
@@ -207,7 +294,7 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
     g.pointOfView({ lat: target.lat, lng: target.lng, altitude: 1.6 }, 900);
   }, [selectedSlug, crises]);
 
-  // Switch texture by updating the globeImageUrl prop (no THREE access needed).
+  // Switch texture by updating the globeImageUrl prop.
   useEffect(() => {
     window.localStorage.setItem(LS_TEXTURE, textureMode);
     if (textureMode === "color") {
@@ -238,11 +325,38 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
         showAtmosphere={true}
         atmosphereColor={colors.olive}
         atmosphereAltitude={textureMode === "color" ? 0.15 : 0.12}
+        // Country border polygons
+        polygonsData={showBorders ? countriesGeo : []}
+        polygonCapColor={() => "rgba(0,0,0,0)"}
+        polygonSideColor={() => "rgba(0,0,0,0)"}
+        polygonStrokeColor={() => colors.oliveDim}
+        polygonAltitude={0.005}
+        polygonLabel={(d: object) => {
+          const name = (d as { properties?: { NAME?: string } }).properties?.NAME ?? "";
+          return name
+            ? `<div style="
+                font-family:${fonts.mono};
+                background:${colors.bgSunken};
+                color:${colors.textMuted};
+                border:1px solid ${colors.rule};
+                padding:3px 8px;
+                font-size:10px;
+                letter-spacing:0.14em;
+              ">${name}</div>`
+            : "";
+        }}
+        // Capital city stars
+        htmlElementsData={showBorders ? capitals : []}
+        htmlLat={(d: object) => (d as CapitalDatum).lat}
+        htmlLng={(d: object) => (d as CapitalDatum).lng}
+        htmlAltitude={0.01}
+        htmlElement={(d: object) => makeCapitalElement(d as CapitalDatum)}
+        // Crisis dots
         pointsData={points}
         pointLat={(d) => (d as PointDatum).lat}
         pointLng={(d) => (d as PointDatum).lng}
         pointColor={(d) => (d as PointDatum).__color}
-        pointAltitude={0.012}
+        pointAltitude={0.018}
         pointRadius={0.35}
         pointsMerge={false}
         pointLabel={(d) => {
@@ -273,10 +387,12 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
       <GlobeControlChips
         textureMode={textureMode}
         autoRotate={autoRotate}
+        showBorders={showBorders}
         onToggleTexture={() =>
           setTextureMode((m) => (m === "color" ? "mono" : "color"))
         }
         onToggleAutoRotate={() => setAutoRotate((v) => !v)}
+        onToggleBorders={() => setShowBorders((v) => !v)}
         onResetView={resetView}
       />
     </div>
