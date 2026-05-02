@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     # enrichment is skipped (Wikipedia background + actor descriptions still
     # run, so dossiers are still richer than the old count-only template).
     reliefweb_appname: str = Field(default="")
+    ucdp_enabled: bool = Field(default=False)
+    ucdp_token: str = Field(default="")
+    ucdp_lookback_days: int = Field(default=730)
+    ucdp_ged_version: str = Field(default="25.1")
+    ucdp_attach_radius_km: int = Field(default=150)
+    # Active crises whose last_event_at is older than this many days are
+    # demoted to `frozen` after each ingest run. 0 disables the sweep.
+    status_stale_days: int = Field(default=90)
 
     model_config = SettingsConfigDict(
         env_file=(REPO_ROOT / ".env"),

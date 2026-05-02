@@ -8,7 +8,7 @@ Neutral platform that visualizes active global conflicts on an interactive 3D gl
 - **Database:** PostgreSQL 16 + PostGIS (via Docker Compose locally)
 - **Frontend:** Vite · React 18 · TypeScript · `react-globe.gl`
 - **Admin auth:** single `ADMIN_TOKEN` env var, sent as `X-Admin-Token` header
-- **Ingestion:** pluggable `IngestionSource` ABC. Sources: `FixtureSource` (seed data), `ACLEDSource` (real OAuth + event aggregation), `GDELTSource` (supplementary event stream, attach-only).
+- **Ingestion:** pluggable `IngestionSource` ABC. Sources: `FixtureSource` (seed data), `ACLEDSource` (real OAuth + event aggregation), `GDELTSource` (supplementary event stream, attach-only), `UCDPSource` (Uppsala GED, attach-only).
 
 ## Repo layout
 
@@ -40,6 +40,16 @@ npm run dev                               # :5173
 ```
 
 Before running the backend, copy `.env.example` to `.env` at the repo root and set `ADMIN_TOKEN`.
+
+## Coding guidelines (Karpathy)
+
+Bias toward caution over speed; for trivial tasks use judgment.
+
+1. **Think before coding.** State assumptions explicitly. If multiple interpretations exist, surface them — don't pick silently. If something's unclear, stop and ask. Push back when a simpler approach exists.
+2. **Simplicity first.** Minimum code that solves the problem. No speculative features, no abstractions for single-use code, no flexibility/configurability that wasn't requested, no error handling for impossible scenarios. If 200 lines could be 50, rewrite.
+3. **Surgical changes.** Touch only what's required. Don't "improve" adjacent code, comments, or formatting. Don't refactor what isn't broken. Match existing style. If you spot unrelated dead code, mention it — don't delete it. Every changed line should trace directly to the request. Only remove orphans your own changes created.
+4. **Goal-driven execution.** Convert tasks into verifiable goals: "fix the bug" → "write a failing test that reproduces it, then make it pass." For multi-step work, state a brief plan with a verify check per step. Loop until each check passes.
+
 
 ## Neutrality rules (non-negotiable)
 
@@ -79,18 +89,26 @@ All flags default to `false`/empty — fixture data works standalone.
 | `GDELT_ENABLED` | `false` | Enable GDELT supplementary stream |
 | `GDELT_ATTACH_RADIUS_KM` | `300` | Max distance to attach event to crisis |
 | `GDELT_LOOKBACK_MINUTES` | `180` | How many minutes of GDELT exports to fetch |
+| `UCDP_ENABLED` | `false` | Enable UCDP GED ingestion (attach-only) |
+| `UCDP_TOKEN` | `""` | UCDP API token (x-ucdp-access-token header) |
+| `UCDP_LOOKBACK_DAYS` | `730` | How far back to query events (2 years default) |
+| `UCDP_GED_VERSION` | `25.1` | UCDP GED dataset version string |
+| `UCDP_ATTACH_RADIUS_KM` | `150` | Max distance to attach a UCDP event to a crisis |
+| `STATUS_STALE_DAYS` | `90` | Active crises with no event in this many days are demoted to `frozen` (0 disables) |
+| `INGEST_SCHEDULE_HOURS` | `24` | Hours between automatic ingest runs (0 = disabled) |
 
 ACLED OAuth tokens cached at `backend/.cache/acled_token.json` (gitignored).
 
 ## Deliberately out of scope (don't add without asking)
 
-- ML classification, summarization, forecasting
+- LLM-API-based features (all ML must run locally with shippable weights). Abstractive summarization or narrative generation of incidents (analytical ML — NER, forecasting, precedent retrieval, extractive excerpts — is in scope).
 - Multi-user admin, audit logs, edit history
-- Public-facing authentication
+- Public-facing authentication (API key access is in scope; user accounts are not)
 - 2D map fallback, mobile polish
-- Automated scheduled ingestion (manual trigger only)
 
 ## Current status pointers
 
-- Plan file: `/Users/emraan/.claude/plans/fluffy-singing-clover.md`
+- Active plan (tasks 1–17): `/Users/emraan/.claude/plans/modular-floating-perlis.md`
+- ML phase detail: `/Users/emraan/.claude/plans/inherited-watching-lighthouse.md`
+- Deployment plan: `/Users/emraan/.claude/plans/fluffy-singing-clover.md`
 - Memory index: `/Users/emraan/.claude/projects/-Users-emraan-Desktop-Conflict/memory/MEMORY.md`

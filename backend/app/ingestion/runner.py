@@ -8,10 +8,12 @@ incremental ingestion can refine this later).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
+
+from app.config import settings
 
 from app.db import SessionLocal
 from app.ingestion.acled import ACLEDSource
@@ -24,6 +26,7 @@ from app.ingestion.base import (
 )
 from app.ingestion.fixture import FixtureSource
 from app.ingestion.gdelt import GDELTSource
+from app.ingestion.ucdp import UCDPSource
 from app.models import (
     Actor,
     ActorRole,
@@ -39,6 +42,7 @@ from app.models.event import CrisisEvent
 SOURCES: list[IngestionSource] = [
     FixtureSource(),
     ACLEDSource(),
+    UCDPSource(),
     GDELTSource(),
 ]
 
@@ -193,6 +197,23 @@ def _upsert_crisis(db: Session, source_name: str, rec: CrisisRecord) -> tuple[Cr
     return crisis, created
 
 
+def _sweep_stale_active(db: Session, stale_days: int) -> int:
+    """Demote active crises with no recent events to `frozen`."""
+    if stale_days <= 0:
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=stale_days)
+    result = db.execute(
+        update(Crisis)
+        .where(
+            Crisis.status == CrisisStatus.active,
+            Crisis.last_event_at.is_not(None),
+            Crisis.last_event_at < cutoff,
+        )
+        .values(status=CrisisStatus.frozen)
+    )
+    return result.rowcount or 0
+
+
 def run_all_sources(db: Session | None = None) -> dict:
     close_after = db is None
     db = db or SessionLocal()
@@ -229,6 +250,11 @@ def run_all_sources(db: Session | None = None) -> dict:
             )
             result["total_inserted"] += inserted
             result["total_updated"] += updated
+
+        demoted = _sweep_stale_active(db, settings.status_stale_days)
+        if demoted:
+            db.commit()
+        result["status_demoted"] = demoted
     finally:
         if close_after:
             db.close()
