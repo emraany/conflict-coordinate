@@ -1,18 +1,21 @@
 """Ingestion source contract.
 
-Every external data source (ACLED, UN OCHA, curated fixtures, etc.) must implement
-`IngestionSource` and return a list of `CrisisRecord`. The runner upserts them by
-`(source_name, external_id)`, so records are idempotent across re-runs.
+Every external data source (ACLED aggregated, ACLED lagged, GDELT, UCDP,
+fixtures, etc.) implements `IngestionSource`. Upsert key is now
+`(country_iso3, admin1_norm)` — every dot represents one admin1 region.
 
-This is the single plug-in point where future ML enrichment (classification,
-summarization) can be injected as a post-fetch transform before upsert.
+Sources can be split into "identity owners" (which decide a crisis exists,
+e.g. ACLED aggregated) and "content contributors" (which add events/actors/
+sources to existing crises, e.g. ACLED lagged, UCDP, GDELT). The
+`owns_*` flags on `IngestionSource` let one record land at a crisis without
+wiping the other side's content.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
 
 @dataclass
@@ -55,6 +58,18 @@ class EventRef:
 
 
 @dataclass
+class IntensityRow:
+    """One ACLED weekly aggregate cell — events, fatalities, exposure for
+    a single (week, event_type) within one admin1."""
+
+    week_start: date
+    event_type: str
+    event_count: int
+    fatalities: int
+    population_exposure: int | None = None
+
+
+@dataclass
 class CrisisRecord:
     external_id: str
     slug: str
@@ -66,18 +81,29 @@ class CrisisRecord:
     summary: str
     status: str  # active | frozen | resolved
     conflict_type: str
+    country_iso3: str | None = None
+    admin1: str | None = None
+    admin1_norm: str | None = None
     started_at: datetime | None = None
     last_event_at: datetime | None = None
+    intensity_last_week_at: datetime | None = None
     actors: list[ActorRef] = field(default_factory=list)
     sources: list[SourceRef] = field(default_factory=list)
     events: list[EventRef] = field(default_factory=list)
+    intensity_rows: list[IntensityRow] = field(default_factory=list)
 
 
 class IngestionSource(ABC):
     name: str
     # If True, the runner calls `attach_events(db)` instead of upserting
-    # crises. Used for secondary sources (GDELT) that only add events.
+    # crises. Used for content contributors that only enrich existing dots.
     attach_only: bool = False
+    # Content-ownership flags. When False the runner does NOT replace that
+    # slice of content for crises this source touches — empty `actors=[]` from
+    # a non-owning source is treated as "no opinion," not "wipe."
+    owns_actors: bool = True
+    owns_events: bool = True
+    owns_sources: bool = True
 
     @abstractmethod
     def fetch(self) -> list[CrisisRecord]: ...

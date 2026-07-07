@@ -1,17 +1,11 @@
 import { useState } from "react";
 
 import { colors, fonts, space } from "../styles/tokens";
-import type { ActorLink, Source } from "../types";
+import type { ActorLink } from "../types";
 
 interface Props {
   actors: ActorLink[];
-  sources: Source[];
-}
-
-function sourceRefNumber(sources: Source[], sourceId: number | null): number | null {
-  if (sourceId === null) return null;
-  const idx = sources.findIndex((s) => s.id === sourceId);
-  return idx >= 0 ? idx + 1 : null;
+  sourceIndex: Map<number, number>;
 }
 
 function roleLabel(role: string): string {
@@ -29,7 +23,7 @@ function roleLabel(role: string): string {
   }
 }
 
-export function ActorList({ actors, sources }: Props) {
+export function ActorList({ actors, sourceIndex }: Props) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   if (actors.length === 0) {
@@ -60,7 +54,7 @@ export function ActorList({ actors, sources }: Props) {
       }}
     >
       {actors.map((link, i) => {
-        const ref = sourceRefNumber(sources, link.source_id);
+        const ref = link.source_id != null ? sourceIndex.get(link.source_id) ?? null : null;
         const num = String(i + 1).padStart(2, "0");
         const description = link.actor.description?.trim() || null;
         const isOpen = expanded.has(link.actor.id);

@@ -16,6 +16,12 @@ dependencies = [
     "httpx>=0.28",
     "scikit-learn>=1.5",
     "pycountry>=24.6",
+    "spacy>=3.7",
+    "en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
+    "networkx>=3.3",
+    "python-louvain>=0.16",
+    "openpyxl>=3.1",
+    "pyyaml>=6.0",
 ]
 
 [dependency-groups]

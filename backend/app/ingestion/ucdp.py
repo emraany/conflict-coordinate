@@ -1,31 +1,39 @@
-"""UCDP GED ingestion source — attach-only.
+"""UCDP GED ingestion source — attach-only, admin1-keyed.
 
 Fetches georeferenced events from the Uppsala Conflict Data Program (UCDP)
-Georeferenced Event Dataset (GED) and attaches each to the nearest existing
-crisis within `UCDP_ATTACH_RADIUS_KM` via PostGIS ST_DWithin. Never creates
-standalone crises — UCDP overlaps heavily with ACLED, and emitting both
-would duplicate dots on the globe.
+Georeferenced Event Dataset (GED) and attaches each to the matching crisis
+by `(country_iso3, admin1_norm)` lookup. UCDP carries `country` + `adm_1`
+fields; we resolve via the `admin1_aliases` table, which the aggregated
+source self-populates with the canonical ACLED vocabulary.
+
+If the alias resolution misses, we fall back to point-in-polygon against
+the `admin1_polygons` layer (Natural Earth). Events with `where_prec > 5`
+(country/region centroids only) are dropped — too coarse to attach with
+any confidence.
 
 UCDP GED v25.1 covers 1989–2024. Authentication: static API token via
 `x-ucdp-access-token` header.
 
 Neutrality: event headlines copied verbatim from `source_headline`. Actor
 rows are NOT created from UCDP — the actor graph stays single-rooted in
-the primary source (ACLED).
+ACLED data.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
+import pycountry
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.ingestion.acled import _normalize_admin1
 from app.ingestion.base import CrisisRecord, IngestionSource
 from app.models import Crisis, Source, SourceType
+from app.models.admin1 import Admin1Alias
 from app.models.event import CrisisEvent
 
 logger = logging.getLogger(__name__)
@@ -52,8 +60,18 @@ def _parse_coord(val: object) -> float | None:
         return None
 
 
+def _country_iso3(name: str | None) -> str | None:
+    if not name:
+        return None
+    try:
+        c = pycountry.countries.lookup(name)
+    except LookupError:
+        return None
+    return getattr(c, "alpha_3", None)
+
+
 def _cutoff_date(lookback_days: int) -> datetime:
-    return datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    return datetime.now(UTC) - timedelta(days=lookback_days)
 
 
 def _fetch_events(client: httpx.Client) -> list[dict]:
@@ -96,28 +114,43 @@ def _fetch_events(client: httpx.Client) -> list[dict]:
     return all_events
 
 
-def _find_nearest_crisis(
-    db: Session, lat: float, lng: float, radius_km: int
-) -> int | None:
+def _load_alias_map(db: Session) -> dict[tuple[str, str], str]:
+    rows = db.execute(
+        select(
+            Admin1Alias.country_iso3,
+            Admin1Alias.alias_norm,
+            Admin1Alias.canonical_admin1_norm,
+        )
+    ).all()
+    return {(iso3, alias): canon for iso3, alias, canon in rows}
+
+
+def _load_crisis_index(db: Session) -> dict[tuple[str, str], int]:
+    rows = db.execute(
+        select(Crisis.country_iso3, Crisis.admin1_norm, Crisis.id).where(
+            Crisis.country_iso3.is_not(None), Crisis.admin1_norm.is_not(None)
+        )
+    ).all()
+    return {(iso3, admin1): cid for iso3, admin1, cid in rows}
+
+
+def _resolve_admin1_via_pip(
+    db: Session, country_iso3: str, lat: float, lng: float
+) -> str | None:
+    """Last-ditch admin1 lookup via PostGIS point-in-polygon. Used when the
+    alias table doesn't recognize the admin1 string (rare for real admin
+    units; common when UCDP records "Unknown" or admin0-only)."""
     stmt = text(
         """
-        SELECT id
-        FROM crises
-        WHERE geom IS NOT NULL
-          AND source_name <> 'ucdp'
-          AND ST_DWithin(
-            geom::geography,
-            ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
-            :radius_m
-          )
-        ORDER BY geom::geography <-> ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
+        SELECT admin1_norm
+        FROM admin1_polygons
+        WHERE country_iso3 = :iso3
+          AND ST_Contains(geom, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326))
         LIMIT 1
         """
     )
-    row = db.execute(
-        stmt, {"lat": lat, "lng": lng, "radius_m": radius_km * 1000}
-    ).first()
-    return row[0] if row else None
+    row = db.execute(stmt, {"iso3": country_iso3, "lat": lat, "lng": lng}).first()
+    return str(row[0]) if row else None
 
 
 def _upsert_source(
@@ -138,7 +171,7 @@ def _upsert_source(
         title=title,
         url=url[:1000],
         publisher=None,
-        retrieved_at=datetime.now(timezone.utc),
+        retrieved_at=datetime.now(UTC),
         source_type=SourceType.news,
         origin="ucdp",
     )
@@ -163,7 +196,7 @@ class UCDPSource(IngestionSource):
     def fetch(self) -> list[CrisisRecord]:
         return []
 
-    def attach_events(self, db: Session) -> dict:
+    def attach_events(self, db: Session) -> dict:  # noqa: C901
         if not settings.ucdp_enabled:
             return {"attached": 0, "skipped": 0}
         if not settings.ucdp_token:
@@ -177,8 +210,14 @@ class UCDPSource(IngestionSource):
             events = _fetch_events(client)
         logger.info("ucdp: fetched %d events", len(events))
 
+        alias_map = _load_alias_map(db)
+        crisis_index = _load_crisis_index(db)
+
         attached = 0
         skipped = 0
+        skipped_no_admin1 = 0
+        skipped_no_crisis = 0
+        skipped_pip_used = 0  # admin1 came from PIP fallback (informational)
         seen_ids: set[str] = set()
         latest_per_crisis: dict[int, datetime] = {}
 
@@ -214,16 +253,36 @@ class UCDPSource(IngestionSource):
                 skipped += 1
                 continue
 
-            crisis_id = _find_nearest_crisis(
-                db, lat, lng, settings.ucdp_attach_radius_km
-            )
+            country = (ev.get("country") or "").strip()
+            iso3 = _country_iso3(country)
+            if not iso3:
+                skipped += 1
+                continue
+
+            adm_1 = (ev.get("adm_1") or "").strip()
+            admin1_norm: str | None = None
+            if adm_1:
+                norm = _normalize_admin1(adm_1)
+                admin1_norm = alias_map.get((iso3, norm), norm) if norm else None
+
+            if admin1_norm is None or (iso3, admin1_norm) not in crisis_index:
+                # Try PIP fallback.
+                admin1_norm = _resolve_admin1_via_pip(db, iso3, lat, lng)
+                if admin1_norm is None:
+                    skipped_no_admin1 += 1
+                    skipped += 1
+                    continue
+                skipped_pip_used += 1
+
+            crisis_id = crisis_index.get((iso3, admin1_norm))
             if crisis_id is None:
+                skipped_no_crisis += 1
                 skipped += 1
                 continue
 
             date_str = (ev.get("date_start") or "").strip()
             try:
-                occurred = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc)
+                occurred = datetime.fromisoformat(date_str).replace(tzinfo=UTC)
             except ValueError:
                 skipped += 1
                 continue
@@ -274,4 +333,12 @@ class UCDPSource(IngestionSource):
                     c.last_event_at = new_last
 
         db.flush()
+        logger.info(
+            "ucdp: attached=%d skipped=%d (no_admin1=%d no_crisis=%d) pip_used=%d",
+            attached,
+            skipped,
+            skipped_no_admin1,
+            skipped_no_crisis,
+            skipped_pip_used,
+        )
         return {"attached": attached, "skipped": skipped}

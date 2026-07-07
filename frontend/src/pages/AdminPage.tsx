@@ -172,7 +172,11 @@ export function AdminPage() {
 
   const refresh = async () => {
     try {
-      const [c, a] = await Promise.all([api.listCrises(), api.listActors()]);
+      // Admin curation surface still operates on legacy admin1 Crisis rows.
+      const [c, a] = await Promise.all([
+        api.listCrises({ includeLegacy: true }),
+        api.listActors(),
+      ]);
       setCrises(c);
       setActors(a);
     } catch (err) {
@@ -293,6 +297,12 @@ export function AdminPage() {
     <Brief
       rightMeta={
         <>
+          <a
+            href="/admin/conflicts"
+            style={{ color: colors.oliveLight, textDecoration: "none" }}
+          >
+            /admin/conflicts
+          </a>
           <a href="/" style={{ color: colors.textMuted, textDecoration: "none" }}>
             /
           </a>

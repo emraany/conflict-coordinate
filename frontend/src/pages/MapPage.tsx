@@ -2,16 +2,16 @@ import { useEffect, useState } from "react";
 
 import { api } from "../api/client";
 import { Brief } from "../components/Brief";
-import { CrisisDetailPanel } from "../components/CrisisDetailPanel";
+import { ConflictDetailPanel } from "../components/ConflictDetailPanel";
 import { Globe } from "../components/Globe";
 import { colors, fonts, space, statusColor } from "../styles/tokens";
-import type { CrisisListItem, CrisisStatus } from "../types";
+import type { ConflictListItem, ConflictStatus } from "../types";
 
 function Legend() {
-  const rows: { label: string; status: CrisisStatus }[] = [
+  const rows: { label: string; status: ConflictStatus }[] = [
     { label: "ACTIVE", status: "active" },
     { label: "FROZEN", status: "frozen" },
-    { label: "RESOLVED", status: "resolved" },
+    { label: "EMERGING", status: "emerging" },
   ];
   return (
     <div
@@ -61,22 +61,26 @@ function Legend() {
 }
 
 export function MapPage() {
-  const [crises, setCrises] = useState<CrisisListItem[]>([]);
+  const [conflicts, setConflicts] = useState<ConflictListItem[]>([]);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.listCrises().then(setCrises).catch(() => setError("Unable to reach API"));
+    api
+      .listConflicts()
+      .then(setConflicts)
+      .catch(() => setError("Unable to reach API"));
   }, []);
 
-  const activeCount = crises.filter((c) => c.status === "active").length;
+  const activeCount = conflicts.filter((c) => c.status === "active").length;
 
   return (
     <Brief
+      section="globe"
       rightMeta={
         <>
           <span style={{ color: colors.textMuted }}>
-            {crises.length} records
+            {conflicts.length} conflicts
           </span>
           <span style={{ color: colors.active }}>{activeCount} active</span>
           <a
@@ -88,32 +92,57 @@ export function MapPage() {
         </>
       }
     >
-      <Globe
-        crises={crises}
-        onSelect={setSelectedSlug}
-        selectedSlug={selectedSlug}
-      />
-      <Legend />
-      {error && (
-        <div
-          style={{
-            position: "absolute",
-            top: space.md,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: colors.bgRaised,
-            border: `1px solid ${colors.active}`,
-            padding: `${space.sm}px ${space.md}px`,
-            color: colors.active,
-          }}
-        >
-          <span className="stamp">CONNECTION FAILURE</span> — {error}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "flex",
+          flexDirection: "row",
+        }}
+      >
+        <div style={{ flex: 1, position: "relative", minWidth: 0 }}>
+          <Globe
+            conflicts={conflicts}
+            onSelect={setSelectedSlug}
+            selectedSlug={selectedSlug}
+          />
+          <Legend />
+          {error && (
+            <div
+              style={{
+                position: "absolute",
+                top: space.md,
+                left: "50%",
+                transform: "translateX(-50%)",
+                background: colors.bgRaised,
+                border: `1px solid ${colors.active}`,
+                padding: `${space.sm}px ${space.md}px`,
+                color: colors.active,
+              }}
+            >
+              <span className="stamp">CONNECTION FAILURE</span> — {error}
+            </div>
+          )}
         </div>
-      )}
-      <CrisisDetailPanel
-        slug={selectedSlug}
-        onClose={() => setSelectedSlug(null)}
-      />
+        {selectedSlug && (
+          <div
+            style={{
+              width: "min(1200px, 66vw)",
+              flexShrink: 0,
+              borderLeft: `1px solid ${colors.ruleStrong}`,
+              background: colors.bgRaised,
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 0,
+            }}
+          >
+            <ConflictDetailPanel
+              slug={selectedSlug}
+              onClose={() => setSelectedSlug(null)}
+            />
+          </div>
+        )}
+      </div>
     </Brief>
   );
 }

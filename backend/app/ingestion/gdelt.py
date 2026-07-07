@@ -1,25 +1,27 @@
-"""GDELT 2.0 supplementary event stream.
+"""GDELT 2.0 supplementary event stream — attach via admin1 PIP.
 
 Fetches the most recent GDELT Events exports (15-min cadence), filters to
 violent conflict categories (CAMEO EventRootCode 18, 19, 20), and attaches
-each event to the nearest existing crisis within a configurable radius via
-PostGIS ST_DWithin. Never creates standalone crises — GDELT's automated
-news extraction is too noisy to be trusted as a primary source of record.
+each event to the crisis whose admin1 polygon contains the event's lat/lng.
+Never creates crises — GDELT extraction is too noisy.
 
-We do NOT create Actor rows from GDELT data. The actor-extraction layer in
-GDELT produces frequent misclassifications, and letting them into the
-actor graph would poison our neutrality rules. We only persist:
-  - `CrisisEvent` rows (external_id = `gdelt:{GLOBALEVENTID}`)
-  - `Source` rows (one per SOURCEURL, origin='gdelt')
+We do NOT create Actor rows from GDELT data. Persisted rows:
+  - `CrisisEvent` (external_id = `gdelt:{GLOBALEVENTID}`)
+  - `Source` (one per SOURCEURL, origin='gdelt')
+
+Admin1 attach precondition: `admin1_polygons` must be populated. Run
+`app.scripts.load_admin1_polygons` once before enabling GDELT in production.
+If the table is empty, GDELT logs a warning and skips all events.
 """
 
 from __future__ import annotations
 
 import csv
 import io
+import logging
 import re
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 from sqlalchemy import select, text
@@ -27,8 +29,10 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.ingestion.base import CrisisRecord, IngestionSource
-from app.models import Source, SourceType
+from app.models import Crisis, Source, SourceType
 from app.models.event import CrisisEvent
+
+logger = logging.getLogger(__name__)
 
 GDELT_LASTUPDATE_URL = "http://data.gdeltproject.org/gdeltv2/lastupdate.txt"
 
@@ -104,19 +108,26 @@ EVENT_ROOT_LABEL = {
     "20": "use_of_unconventional_mass_violence",
 }
 
+# Refuse to attach a violent GDELT event to a topically-incompatible crisis.
+_INCOMPATIBLE: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("19", "civil_unrest"),
+        ("20", "civil_unrest"),
+        ("18", "strategic_developments"),
+        ("19", "strategic_developments"),
+        ("20", "strategic_developments"),
+    }
+)
+
 
 def _latest_export_urls() -> list[str]:
     """Return up to N most-recent export CSV.zip URLs (15-min cadence each)."""
     n = max(1, settings.gdelt_lookback_minutes // 15)
     resp = httpx.get(GDELT_LASTUPDATE_URL, timeout=30.0)
     resp.raise_for_status()
-    # lastupdate.txt has three lines; the first is the 15-min export CSV.
     line = resp.text.strip().splitlines()[0]
-    # Line format: "<size> <md5> <url>"
     url = line.split()[-1]
     urls = [url]
-    # Walk back: URLs are timestamped; easier to just rely on lastupdate.txt
-    # and fetch older files by name derived from the latest timestamp.
     m = re.search(r"(\d{14})\.export\.CSV\.zip", url)
     if not m:
         return urls
@@ -126,7 +137,6 @@ def _latest_export_urls() -> list[str]:
     for i in range(1, n):
         t = stamp.timestamp() - i * 15 * 60
         prev = _dt.utcfromtimestamp(t)
-        # Round to 15-min boundary.
         minute = (prev.minute // 15) * 15
         prev = prev.replace(minute=minute, second=0, microsecond=0)
         urls.append(
@@ -163,27 +173,44 @@ def _fetch_events_csv(url: str) -> list[dict]:
     return out
 
 
-def _find_nearest_crisis(
-    db: Session, lat: float, lng: float, radius_km: int
-) -> int | None:
+_ISO2_TO_ISO3_CACHE: dict[str, str] = {}
+
+
+def _iso2_to_iso3(iso2: str) -> str | None:
+    if not iso2:
+        return None
+    if iso2 in _ISO2_TO_ISO3_CACHE:
+        return _ISO2_TO_ISO3_CACHE[iso2]
+    import pycountry
+
+    try:
+        c = pycountry.countries.get(alpha_2=iso2)
+    except LookupError:
+        c = None
+    iso3 = getattr(c, "alpha_3", None) if c else None
+    if iso3:
+        _ISO2_TO_ISO3_CACHE[iso2] = iso3
+    return iso3
+
+
+def _polygon_count(db: Session) -> int:
+    return int(db.execute(text("SELECT count(*) FROM admin1_polygons")).scalar() or 0)
+
+
+def _resolve_via_pip(
+    db: Session, country_iso3: str, lat: float, lng: float
+) -> str | None:
     stmt = text(
         """
-        SELECT id
-        FROM crises
-        WHERE geom IS NOT NULL
-          AND ST_DWithin(
-            geom::geography,
-            ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
-            :radius_m
-          )
-        ORDER BY geom::geography <-> ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
+        SELECT admin1_norm
+        FROM admin1_polygons
+        WHERE country_iso3 = :iso3
+          AND ST_Contains(geom, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326))
         LIMIT 1
         """
     )
-    row = db.execute(
-        stmt, {"lat": lat, "lng": lng, "radius_m": radius_km * 1000}
-    ).first()
-    return row[0] if row else None
+    row = db.execute(stmt, {"iso3": country_iso3, "lat": lat, "lng": lng}).first()
+    return str(row[0]) if row else None
 
 
 def _upsert_source(db: Session, crisis_id: int, url: str) -> Source:
@@ -201,7 +228,7 @@ def _upsert_source(db: Session, crisis_id: int, url: str) -> Source:
         title=f"GDELT-cited article: {url[:120]}",
         url=url,
         publisher="GDELT",
-        retrieved_at=datetime.now(timezone.utc),
+        retrieved_at=datetime.now(UTC),
         source_type=SourceType.news,
         origin="gdelt",
     )
@@ -215,15 +242,36 @@ class GDELTSource(IngestionSource):
     attach_only = True
 
     def fetch(self) -> list[CrisisRecord]:
-        # attach_only source — never creates crises.
         return []
 
-    def attach_events(self, db: Session) -> dict:
+    def attach_events(self, db: Session) -> dict:  # noqa: C901
         if not settings.gdelt_enabled:
             return {"attached": 0, "skipped": 0}
 
+        if _polygon_count(db) == 0:
+            logger.warning(
+                "gdelt: admin1_polygons empty — run "
+                "`uv run python -m app.scripts.load_admin1_polygons` "
+                "before enabling GDELT. Skipping."
+            )
+            return {"attached": 0, "skipped": 0}
+
+        # Bulk-load (iso3, admin1_norm) → crisis_id mapping.
+        crisis_index = {
+            (iso3, admin1): cid
+            for iso3, admin1, cid in db.execute(
+                select(Crisis.country_iso3, Crisis.admin1_norm, Crisis.id).where(
+                    Crisis.country_iso3.is_not(None),
+                    Crisis.admin1_norm.is_not(None),
+                )
+            ).all()
+        }
+
         attached = 0
         skipped = 0
+        skipped_no_pip = 0
+        skipped_no_crisis = 0
+        skipped_incompatible = 0
         seen_ids: set[str] = set()
 
         for url in _latest_export_urls():
@@ -248,10 +296,30 @@ class GDELTSource(IngestionSource):
                     skipped += 1
                     continue
 
-                crisis_id = _find_nearest_crisis(
-                    db, lat, lng, settings.gdelt_attach_radius_km
-                )
+                country_iso2 = (ev.get("ActionGeo_CountryCode") or "").strip().upper()
+                iso3 = _iso2_to_iso3(country_iso2)
+                if not iso3:
+                    skipped += 1
+                    continue
+
+                admin1_norm = _resolve_via_pip(db, iso3, lat, lng)
+                if not admin1_norm:
+                    skipped_no_pip += 1
+                    skipped += 1
+                    continue
+                crisis_id = crisis_index.get((iso3, admin1_norm))
                 if crisis_id is None:
+                    skipped_no_crisis += 1
+                    skipped += 1
+                    continue
+
+                crisis = db.get(Crisis, crisis_id)
+                if crisis is None:
+                    skipped += 1
+                    continue
+                ctype = crisis.conflict_type or ""
+                if (ev["EventRootCode"], ctype) in _INCOMPATIBLE:
+                    skipped_incompatible += 1
                     skipped += 1
                     continue
 
@@ -263,9 +331,9 @@ class GDELTSource(IngestionSource):
                 try:
                     occurred = datetime.strptime(
                         ev["SQLDATE"], "%Y%m%d"
-                    ).replace(tzinfo=timezone.utc)
+                    ).replace(tzinfo=UTC)
                 except ValueError:
-                    occurred = datetime.now(timezone.utc)
+                    occurred = datetime.now(UTC)
 
                 db.add(
                     CrisisEvent(
@@ -285,4 +353,13 @@ class GDELTSource(IngestionSource):
                 attached += 1
 
         db.flush()
+        logger.info(
+            "gdelt: attached=%d skipped=%d (no_pip=%d no_crisis=%d "
+            "incompatible=%d)",
+            attached,
+            skipped,
+            skipped_no_pip,
+            skipped_no_crisis,
+            skipped_incompatible,
+        )
         return {"attached": attached, "skipped": skipped}

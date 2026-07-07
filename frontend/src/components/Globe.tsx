@@ -3,15 +3,19 @@ import GlobeGL from "react-globe.gl";
 import type { GlobeMethods } from "react-globe.gl";
 
 import { colors, fonts, space, statusColor } from "../styles/tokens";
-import type { CrisisListItem } from "../types";
+import type { ConflictListItem } from "../types";
 
 interface Props {
-  crises: CrisisListItem[];
+  conflicts: ConflictListItem[];
   onSelect: (slug: string) => void;
   selectedSlug: string | null;
 }
 
-interface PointDatum extends CrisisListItem {
+// Conflicts with no centroid yet (no events routed, no footprint cells with
+// known coords) are filtered out of the dot layer.
+type PlacedConflict = ConflictListItem & { lat: number; lng: number };
+
+interface PointDatum extends PlacedConflict {
   __color: string;
 }
 
@@ -24,6 +28,7 @@ interface RingDatum {
 }
 
 type TextureMode = "color" | "mono";
+type ViewMode = "dots" | "hex";
 
 const COLOR_TEXTURE = "//unpkg.com/three-globe/example/img/earth-blue-marble.jpg";
 const BUMP_TEXTURE = "//unpkg.com/three-globe/example/img/earth-topology.png";
@@ -31,6 +36,27 @@ const BUMP_TEXTURE = "//unpkg.com/three-globe/example/img/earth-topology.png";
 const LS_TEXTURE = "cc.globe.texture";
 const LS_AUTOROTATE = "cc.globe.autoRotate";
 const LS_BORDERS = "cc.globe.borders";
+const LS_VIEWMODE = "cc.globe.viewMode";
+
+function dotRadius(eventCount: number): number {
+  return 0.22 + 0.09 * Math.log1p(eventCount);
+}
+
+function lerpHex(from: [number, number, number], to: [number, number, number], t: number): string {
+  const r = Math.round(from[0] + (to[0] - from[0]) * t);
+  const g = Math.round(from[1] + (to[1] - from[1]) * t);
+  const b = Math.round(from[2] + (to[2] - from[2]) * t);
+  return `rgb(${r},${g},${b})`;
+}
+
+// Olive → active red ramp for intensity
+const OLIVE_RGB: [number, number, number] = [0x6b, 0x73, 0x54];
+const ACTIVE_RGB: [number, number, number] = [0xa6, 0x4a, 0x3a];
+
+function intensityColor(weight: number): string {
+  const t = Math.min(1, Math.log1p(weight) / 8);
+  return lerpHex(OLIVE_RGB, ACTIVE_RGB, t);
+}
 
 function readLocal<T extends string>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -70,17 +96,21 @@ function GlobeControlChips({
   textureMode,
   autoRotate,
   showBorders,
+  viewMode,
   onToggleTexture,
   onToggleAutoRotate,
   onToggleBorders,
+  onToggleView,
   onResetView,
 }: {
   textureMode: TextureMode;
   autoRotate: boolean;
   showBorders: boolean;
+  viewMode: ViewMode;
   onToggleTexture: () => void;
   onToggleAutoRotate: () => void;
   onToggleBorders: () => void;
+  onToggleView: () => void;
   onResetView: () => void;
 }) {
   const chipStyle = {
@@ -105,6 +135,17 @@ function GlobeControlChips({
         zIndex: 2,
       }}
     >
+      <button
+        type="button"
+        onClick={onToggleView}
+        style={{
+          ...chipStyle,
+          color: viewMode === "hex" ? colors.oliveLight : colors.textMuted,
+        }}
+        title="Toggle dot view vs hex intensity heatmap"
+      >
+        [ {viewMode === "hex" ? "HEX" : "DOTS"} ]
+      </button>
       <button
         type="button"
         onClick={onToggleBorders}
@@ -150,9 +191,18 @@ function GlobeControlChips({
   );
 }
 
-export function Globe({ crises, onSelect, selectedSlug }: Props) {
+export function Globe({ conflicts, onSelect, selectedSlug }: Props) {
+  const placedConflicts: PlacedConflict[] = useMemo(
+    () =>
+      conflicts.filter(
+        (c): c is PlacedConflict => c.lat !== null && c.lng !== null,
+      ),
+    [conflicts],
+  );
   const ref = useRef<GlobeMethods | undefined>(undefined);
+  const containerRef = useRef<HTMLDivElement>(null);
   const monoDataUrlRef = useRef<string | null>(null);
+  const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
 
   const [textureMode, setTextureMode] = useState<TextureMode>(() =>
     readLocal<TextureMode>(LS_TEXTURE, "color"),
@@ -163,16 +213,26 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
   const [showBorders, setShowBorders] = useState<boolean>(
     () => readLocal(LS_BORDERS, "true") === "true",
   );
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    readLocal<ViewMode>(LS_VIEWMODE, "dots"),
+  );
   const [activeTextureUrl, setActiveTextureUrl] = useState<string>(COLOR_TEXTURE);
   const [countriesGeo, setCountriesGeo] = useState<object[]>([]);
 
   const points: PointDatum[] = useMemo(
     () =>
-      crises.map((c) => ({
-        ...c,
-        __color: statusColor(c.status),
-      })),
-    [crises],
+      placedConflicts.map((c) => {
+        const base = statusColor(c.status);
+        // Frozen + emerging dots render at ~50% opacity ("dormant"/"unconfirmed").
+        // #RRGGBBAA where AA=80 is exactly 50%.
+        const color =
+          c.status === "frozen" || c.status === "emerging" ? `${base}80` : base;
+        return {
+          ...c,
+          __color: color,
+        };
+      }),
+    [placedConflicts],
   );
 
   const displayedCountries = useMemo<object[]>(
@@ -182,7 +242,7 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
 
   const rings: RingDatum[] = useMemo(
     () =>
-      crises
+      placedConflicts
         .filter((c) => c.status === "active")
         .map((c) => ({
           lat: c.lat,
@@ -191,8 +251,20 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
           propagationSpeed: 2,
           repeatPeriod: 2000,
         })),
-    [crises],
+    [placedConflicts],
   );
+
+  // Track container size so the globe canvas matches its parent (not the window).
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const measure = () =>
+      setSize({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Load country borders GeoJSON from bundled static file.
   useEffect(() => {
@@ -236,14 +308,19 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
     window.localStorage.setItem(LS_BORDERS, String(showBorders));
   }, [showBorders]);
 
-  // Fly to selected crisis.
+  // Persist view mode.
+  useEffect(() => {
+    window.localStorage.setItem(LS_VIEWMODE, viewMode);
+  }, [viewMode]);
+
+  // Fly to selected conflict.
   useEffect(() => {
     const g = ref.current;
     if (!g || !selectedSlug) return;
-    const target = crises.find((c) => c.slug === selectedSlug);
+    const target = placedConflicts.find((c) => c.slug === selectedSlug);
     if (!target) return;
     g.pointOfView({ lat: target.lat, lng: target.lng, altitude: 1.6 }, 900);
-  }, [selectedSlug, crises]);
+  }, [selectedSlug, placedConflicts]);
 
   // Switch texture by updating the globeImageUrl prop.
   useEffect(() => {
@@ -267,9 +344,11 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
   }, []);
 
   return (
-    <div style={{ position: "absolute", inset: 0 }}>
+    <div ref={containerRef} style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
       <GlobeGL
         ref={ref}
+        width={size.w || undefined}
+        height={size.h || undefined}
         backgroundColor="rgba(0,0,0,0)"
         globeImageUrl={activeTextureUrl}
         bumpImageUrl={BUMP_TEXTURE}
@@ -296,13 +375,13 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
               ">${name}</div>`
             : "";
         }}
-        // Crisis dots
-        pointsData={points}
+        // Crisis dots (dots view)
+        pointsData={viewMode === "dots" ? points : []}
         pointLat={(d) => (d as PointDatum).lat}
         pointLng={(d) => (d as PointDatum).lng}
         pointColor={(d) => (d as PointDatum).__color}
         pointAltitude={0.006}
-        pointRadius={0.35}
+        pointRadius={(d) => dotRadius((d as PointDatum).event_count)}
         pointsMerge={false}
         pointLabel={(d) => {
           const p = d as PointDatum;
@@ -317,27 +396,99 @@ export function Globe({ crises, onSelect, selectedSlug }: Props) {
           ">
             <div style="color:${p.__color};font-size:10px;letter-spacing:0.2em;">[ ${p.status.toUpperCase()} ]</div>
             <div style="margin-top:2px;">${p.name}</div>
-            <div style="color:${colors.textMuted};font-size:10px;margin-top:2px;">${p.country ?? ""}</div>
+            <div style="color:${colors.textMuted};font-size:10px;margin-top:2px;">${p.primary_iso3 ?? ""} · ${p.event_count} events${p.total_fatalities > 0 ? ` · † ${p.total_fatalities}` : ""}</div>
           </div>`;
         }}
         onPointClick={(p) => onSelect((p as PointDatum).slug)}
-        ringsData={rings}
+        ringsData={viewMode === "dots" ? rings : []}
         ringLat={(d) => (d as RingDatum).lat}
         ringLng={(d) => (d as RingDatum).lng}
         ringMaxRadius={(d) => (d as RingDatum).maxRadius}
         ringPropagationSpeed={(d) => (d as RingDatum).propagationSpeed}
         ringRepeatPeriod={(d) => (d as RingDatum).repeatPeriod}
         ringColor={() => colors.active}
+        // Hex intensity view
+        hexBinPointsData={viewMode === "hex" ? points : []}
+        hexBinPointLat={(d: object) => (d as PointDatum).lat}
+        hexBinPointLng={(d: object) => (d as PointDatum).lng}
+        hexBinPointWeight={(d: object) => Math.max(1, (d as PointDatum).event_count)}
+        hexBinResolution={3}
+        hexMargin={0.2}
+        hexAltitude={(d: { sumWeight: number }) =>
+          0.01 + 0.045 * Math.log1p(d.sumWeight)
+        }
+        hexTopColor={(d: { sumWeight: number }) => intensityColor(d.sumWeight)}
+        hexSideColor={(d: { sumWeight: number }) => intensityColor(d.sumWeight)}
+        hexLabel={(d: { points: PointDatum[]; sumWeight: number }) => {
+          const total = Math.round(d.sumWeight);
+          const n = d.points.length;
+          const topNames = d.points
+            .slice()
+            .sort((a, b) => b.event_count - a.event_count)
+            .slice(0, 3)
+            .map((p) => p.name);
+          return `<div style="
+            font-family:'IBM Plex Mono',monospace;
+            background:${colors.bgRaised};
+            color:${colors.text};
+            border:1px solid ${colors.ruleStrong};
+            padding:6px 10px;
+            font-size:11px;
+          ">
+            <div style="color:${colors.oliveLight};font-size:10px;letter-spacing:0.2em;">[ CLUSTER ]</div>
+            <div style="margin-top:2px;">${n} CRISIS${n !== 1 ? "ES" : ""} · ${total} EVENTS</div>
+            <div style="color:${colors.textMuted};font-size:10px;margin-top:3px;">${topNames.join("<br/>")}</div>
+          </div>`;
+        }}
       />
+      {viewMode === "hex" && (
+        <div
+          style={{
+            position: "absolute",
+            top: space.md,
+            left: space.md,
+            maxWidth: 340,
+            background: colors.bgRaised,
+            border: `1px solid ${colors.rule}`,
+            borderLeft: `2px solid ${colors.active}`,
+            padding: `${space.sm}px ${space.md}px`,
+            fontFamily: fonts.mono,
+            fontSize: 10,
+            lineHeight: 1.5,
+            color: colors.textMuted,
+            letterSpacing: "0.04em",
+            zIndex: 2,
+          }}
+        >
+          <div
+            className="stamp"
+            style={{
+              color: colors.active,
+              fontSize: 10,
+              letterSpacing: "0.22em",
+              marginBottom: 4,
+            }}
+          >
+            // DATA CAVEAT
+          </div>
+          Hex height + color reflect total <strong style={{ color: colors.text }}>event count</strong>, not
+          lethality or severity. A region with many small protests will appear
+          taller than one with fewer high-fatality incidents. For true
+          intensity, cross-reference fatality (†) counts in individual dossiers.
+        </div>
+      )}
+
       <GlobeControlChips
         textureMode={textureMode}
         autoRotate={autoRotate}
         showBorders={showBorders}
+        viewMode={viewMode}
         onToggleTexture={() =>
           setTextureMode((m) => (m === "color" ? "mono" : "color"))
         }
         onToggleAutoRotate={() => setAutoRotate((v) => !v)}
         onToggleBorders={() => setShowBorders((v) => !v)}
+        onToggleView={() => setViewMode((v) => (v === "dots" ? "hex" : "dots"))}
         onResetView={resetView}
       />
     </div>

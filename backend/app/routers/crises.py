@@ -1,18 +1,36 @@
+from collections import defaultdict
+from datetime import date, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi.responses import RedirectResponse
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db import get_db
 from app.deps import require_admin_token
-from app.models import Crisis, CrisisActor, Source
+from app.models import (
+    Crisis,
+    CrisisActor,
+    CrisisIntensityWeekly,
+    CrisisSlugAlias,
+    EntityMention,
+    Source,
+)
+from app.models.event import CrisisEvent
+from app.ml.graph import build_graph
 from app.schemas import (
     ActorLinkCreate,
     ActorLinkOut,
     CrisisCreate,
     CrisisDetail,
+    CrisisEntities,
+    CrisisGraph,
     CrisisListItem,
     CrisisStats,
     CrisisUpdate,
+    EntityAggregate,
+    EntityGroup,
+    IntensityWeek,
     SourceCreate,
     SourceOut,
 )
@@ -20,7 +38,76 @@ from app.schemas import (
 router = APIRouter(prefix="/api/crises", tags=["crises"])
 
 
-def _compute_stats(events) -> CrisisStats:  # type: ignore[no-untyped-def]
+def _load_intensity_52w(
+    db: Session, crisis_id: int
+) -> tuple[list[IntensityWeek], int, int, int | None]:
+    """Return (weeks, recent_4w_events, recent_4w_fatalities, recent_pop_exposed).
+
+    Reads up to 52 weeks of weekly aggregate rows for the crisis. Population
+    exposure is MAX (not SUM) over the active window because the same admin1
+    population is repeated weekly when there's any activity.
+    """
+    rows = db.execute(
+        select(
+            CrisisIntensityWeekly.week_start,
+            CrisisIntensityWeekly.event_type,
+            CrisisIntensityWeekly.event_count,
+            CrisisIntensityWeekly.fatalities,
+            CrisisIntensityWeekly.population_exposure,
+        )
+        .where(CrisisIntensityWeekly.crisis_id == crisis_id)
+        .order_by(CrisisIntensityWeekly.week_start.asc())
+    ).all()
+    if not rows:
+        return [], 0, 0, None
+
+    by_week: dict[date, dict] = defaultdict(
+        lambda: {"counts": defaultdict(int), "fatalities": 0, "exposure": None}
+    )
+    for r in rows:
+        bucket = by_week[r.week_start]
+        bucket["counts"][r.event_type] += int(r.event_count or 0)
+        bucket["fatalities"] += int(r.fatalities or 0)
+        if r.population_exposure is not None:
+            bucket["exposure"] = max(
+                bucket["exposure"] or 0, int(r.population_exposure)
+            )
+
+    sorted_weeks = sorted(by_week.keys())
+    cutoff_idx = max(0, len(sorted_weeks) - 52)
+    weeks = [
+        IntensityWeek(
+            week_start=w,
+            event_count_by_type=dict(by_week[w]["counts"]),
+            fatalities=by_week[w]["fatalities"],
+            population_exposure=by_week[w]["exposure"],
+        )
+        for w in sorted_weeks[cutoff_idx:]
+    ]
+
+    # 4-week window anchored on the most recent week present.
+    latest = sorted_weeks[-1]
+    active_cutoff = latest - timedelta(weeks=4)
+    recent_events = 0
+    recent_fatalities = 0
+    recent_exposure: int | None = None
+    for w in sorted_weeks:
+        if w < active_cutoff:
+            continue
+        bucket = by_week[w]
+        recent_events += sum(bucket["counts"].values())
+        recent_fatalities += bucket["fatalities"]
+        if bucket["exposure"] is not None:
+            recent_exposure = max(recent_exposure or 0, bucket["exposure"])
+    return weeks, recent_events, recent_fatalities, recent_exposure
+
+
+def _compute_stats(
+    events,
+    recent_4w_events: int = 0,
+    recent_4w_fatalities: int = 0,
+    recent_population_exposed: int | None = None,
+) -> CrisisStats:  # type: ignore[no-untyped-def]
     from collections import Counter
     type_counts: Counter = Counter()
     total_fatalities = 0
@@ -41,6 +128,9 @@ def _compute_stats(events) -> CrisisStats:  # type: ignore[no-untyped-def]
         event_type_counts=dict(type_counts.most_common()),
         first_event_at=first_at,
         last_event_at=last_at,
+        recent_4w_events=recent_4w_events,
+        recent_4w_fatalities=recent_4w_fatalities,
+        recent_population_exposed=recent_population_exposed,
     )
 
 
@@ -54,24 +144,159 @@ def _load_crisis_detail(db: Session, crisis: Crisis) -> CrisisDetail:
         )
         for link in crisis.actor_links
     ]
+    weeks, r4_events, r4_fatalities, r4_exposed = _load_intensity_52w(db, crisis.id)
     return CrisisDetail.model_validate(
         {
-            **{k: getattr(crisis, k) for k in CrisisDetail.model_fields if k not in {"actors", "sources", "events", "stats"}},
+            **{
+                k: getattr(crisis, k)
+                for k in CrisisDetail.model_fields
+                if k not in {"actors", "sources", "events", "stats", "intensity_52w"}
+            },
             "actors": actor_links,
             "sources": crisis.sources,
             "events": sorted(crisis.events, key=lambda e: e.occurred_at, reverse=True)[:50],
-            "stats": _compute_stats(crisis.events),
+            "stats": _compute_stats(
+                crisis.events,
+                recent_4w_events=r4_events,
+                recent_4w_fatalities=r4_fatalities,
+                recent_population_exposed=r4_exposed,
+            ),
+            "intensity_52w": weeks,
         }
     )
 
 
+def _resolve_slug(db: Session, slug: str) -> str | None:
+    """Map an old slug to its current crisis slug via crisis_slug_aliases.
+    Returns None if no alias exists."""
+    alias = db.scalar(
+        select(Crisis.slug)
+        .join(CrisisSlugAlias, CrisisSlugAlias.crisis_id == Crisis.id)
+        .where(CrisisSlugAlias.old_slug == slug)
+    )
+    return alias
+
+
 @router.get("", response_model=list[CrisisListItem])
-def list_crises(db: Session = Depends(get_db)) -> list[Crisis]:
-    return list(db.scalars(select(Crisis).order_by(Crisis.name)))
+def list_crises(
+    include_dropped: bool = False,
+    include_legacy: bool = False,
+    db: Session = Depends(get_db),
+) -> list[CrisisListItem]:
+    """List crisis rows. By default hides legacy admin1-keyed rows that are
+    superseded by the conflict registry — pass include_legacy=true from the
+    admin UI to surface them for triage."""
+    stmt = select(Crisis).order_by(Crisis.name)
+    if not include_dropped:
+        # Today our enum is {active, frozen, resolved}; admin can later add
+        # dropped if needed. For now this is a no-op surface.
+        pass
+    if not include_legacy:
+        stmt = stmt.where(Crisis.legacy.is_(False))
+    crises = list(db.scalars(stmt))
+    counts_q = select(
+        CrisisEvent.crisis_id,
+        func.count().label("n"),
+        func.coalesce(func.sum(CrisisEvent.fatalities), 0).label("f"),
+    ).group_by(CrisisEvent.crisis_id)
+    counts = {row.crisis_id: (int(row.n), int(row.f)) for row in db.execute(counts_q)}
+    return [
+        CrisisListItem(
+            id=c.id,
+            slug=c.slug,
+            name=c.name,
+            country=c.country,
+            country_iso3=c.country_iso3,
+            admin1=c.admin1,
+            region=c.region,
+            lat=c.lat,
+            lng=c.lng,
+            status=c.status,
+            conflict_type=c.conflict_type,
+            started_at=c.started_at,
+            last_event_at=c.last_event_at,
+            event_count=counts.get(c.id, (0, 0))[0],
+            total_fatalities=counts.get(c.id, (0, 0))[1],
+        )
+        for c in crises
+    ]
+
+
+@router.get("/{slug}/entities", response_model=CrisisEntities)
+def get_crisis_entities(
+    slug: str,
+    per_label: int = 12,
+    db: Session = Depends(get_db),
+) -> CrisisEntities:
+    crisis = db.scalar(select(Crisis.id).where(Crisis.slug == slug))
+    if crisis is None:
+        raise HTTPException(status_code=404, detail="Crisis not found")
+
+    from sqlalchemy.dialects.postgresql import array_agg
+
+    rows = db.execute(
+        select(
+            EntityMention.label,
+            EntityMention.text_norm,
+            func.count().label("n"),
+            func.min(EntityMention.text).label("text"),
+            array_agg(EntityMention.event_id.distinct()).label("event_ids"),
+        )
+        .join(CrisisEvent, CrisisEvent.id == EntityMention.event_id)
+        .where(CrisisEvent.crisis_id == crisis)
+        .group_by(EntityMention.label, EntityMention.text_norm)
+        .order_by(EntityMention.label, func.count().desc())
+    ).all()
+
+    by_label: dict[str, list[EntityAggregate]] = {}
+    total = 0
+    for r in rows:
+        total += int(r.n)
+        bucket = by_label.setdefault(r.label, [])
+        if len(bucket) >= per_label:
+            continue
+        bucket.append(
+            EntityAggregate(
+                label=r.label,
+                text=r.text,
+                count=int(r.n),
+                event_ids=[int(x) for x in (r.event_ids or [])],
+            )
+        )
+
+    label_order = ["GPE", "ORG", "PERSON", "NORP", "LOC", "FAC", "EVENT"]
+    groups = [
+        EntityGroup(label=lbl, entities=by_label[lbl])
+        for lbl in label_order
+        if lbl in by_label
+    ]
+    for lbl, ents in by_label.items():
+        if lbl not in label_order:
+            groups.append(EntityGroup(label=lbl, entities=ents))
+
+    return CrisisEntities(crisis_id=crisis, total_mentions=total, groups=groups)
+
+
+@router.get("/{slug}/graph", response_model=CrisisGraph)
+def get_crisis_graph(slug: str, db: Session = Depends(get_db)) -> CrisisGraph:
+    crisis_id = db.scalar(select(Crisis.id).where(Crisis.slug == slug))
+    if crisis_id is None:
+        raise HTTPException(status_code=404, detail="Crisis not found")
+    payload = build_graph(db, crisis_id)
+    return CrisisGraph(crisis_id=crisis_id, **payload)
+
+
+@router.get("/by-slug-alias/{old_slug}")
+def resolve_slug_alias(old_slug: str, db: Session = Depends(get_db)):
+    """301-redirect old DBSCAN-cluster slugs to their admin1-keyed successor."""
+    new_slug = _resolve_slug(db, old_slug)
+    if new_slug is None:
+        raise HTTPException(status_code=404, detail="No alias for this slug")
+    return RedirectResponse(url=f"/api/crises/{new_slug}", status_code=301)
 
 
 @router.get("/{slug}", response_model=CrisisDetail)
-def get_crisis(slug: str, db: Session = Depends(get_db)) -> CrisisDetail:
+def get_crisis(slug: str, db: Session = Depends(get_db)):
     stmt = (
         select(Crisis)
         .where(Crisis.slug == slug)
@@ -84,6 +309,11 @@ def get_crisis(slug: str, db: Session = Depends(get_db)) -> CrisisDetail:
     )
     crisis = db.scalars(stmt).one_or_none()
     if crisis is None:
+        new_slug = _resolve_slug(db, slug)
+        if new_slug is not None:
+            return RedirectResponse(
+                url=f"/api/crises/{new_slug}", status_code=301
+            )
         raise HTTPException(status_code=404, detail="Crisis not found")
     return _load_crisis_detail(db, crisis)
 
@@ -161,6 +391,7 @@ def link_actor(
         role=payload.role,
         notes=payload.notes,
         source_id=payload.source_id,
+        admin_curated=True,
     )
     db.add(link)
     db.commit()

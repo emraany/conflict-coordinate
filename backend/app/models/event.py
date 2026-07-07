@@ -31,6 +31,11 @@ class CrisisEvent(Base):
     source_id: Mapped[int | None] = mapped_column(
         ForeignKey("sources.id", ondelete="SET NULL")
     )
+    # Routing target — populated during conflict-registry rebuild. NULL means
+    # the event hasn't been routed yet, or no routing rule matched (orphan).
+    conflict_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conflicts.id", ondelete="SET NULL"), index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

@@ -1,0 +1,611 @@
+# Canonical actor catalog. Each entry is one normalized party that may appear
+# in one or more conflicts. The `aliases` list holds the verbatim ACLED /
+# UCDP / GDELT string variants that should collapse to this canonical entry
+# during event routing and actor-link normalization.
+#
+# Conventions:
+#   - `slug` is stable; renaming is breaking. New canonical entries get new
+#     slugs.
+#   - `aliases` patterns are matched case-insensitively as SQL LIKE-style
+#     wildcards (`%` and `_`). Plain strings without `%` match exactly.
+#   - `type` ∈ {state, non_state, coalition, other}.
+#   - `description` is verbatim Wikipedia or empty — enrichment fills it in.
+
+actors:
+
+  # --- Russo-Ukrainian War ---
+  - slug: ru-state-forces
+    name: Military Forces of Russia
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Russian_Armed_Forces
+    aliases:
+      - Military Forces of Russia (1999-)
+      - Military Forces of Russia (2000-)
+      - Military Forces of Russia (2000-) Air Force
+      - Military Forces of Russia (2000-) Navy
+      - Russia
+      - Russian Armed Forces
+
+  - slug: ua-state-forces
+    name: Military Forces of Ukraine
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Armed_Forces_of_Ukraine
+    aliases:
+      - Military Forces of Ukraine (2019-)
+      - Military Forces of Ukraine (2014-2019)
+      - Ukraine
+      - Armed Forces of Ukraine
+
+  - slug: dpr-forces
+    name: Donetsk People's Republic forces
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Donetsk_People%27s_Republic
+    aliases:
+      - Donetsk People's Republic
+      - Military Forces of Donetsk People's Republic
+      - DPR
+
+  - slug: lpr-forces
+    name: Luhansk People's Republic forces
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Luhansk_People%27s_Republic
+    aliases:
+      - Luhansk People's Republic
+      - Military Forces of Luhansk People's Republic
+      - LPR
+
+  - slug: wagner-group
+    name: Wagner Group
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Wagner_Group
+    aliases:
+      - Wagner Group
+      - PMC Wagner
+      - Wagner
+
+  # --- Israel–Hamas War ---
+  - slug: il-state-forces
+    name: Israel Defense Forces
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Israel_Defense_Forces
+    aliases:
+      - Military Forces of Israel
+      - Military Forces of Israel (2022-)
+      - Israel Defense Forces
+      - IDF
+
+  - slug: hamas
+    name: Hamas
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Hamas
+    aliases:
+      - Hamas
+      - Al-Qassam Brigades
+      - Izz ad-Din al-Qassam Brigades
+
+  - slug: pij
+    name: Palestinian Islamic Jihad
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Palestinian_Islamic_Jihad
+    aliases:
+      - Palestinian Islamic Jihad
+      - PIJ
+      - Al-Quds Brigades
+
+  - slug: hezbollah
+    name: Hezbollah
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Hezbollah
+    aliases:
+      - Hezbollah
+      - Hizbullah
+
+  # --- Sudanese Civil War (SAF–RSF) ---
+  - slug: saf
+    name: Sudanese Armed Forces
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Sudanese_Armed_Forces
+    aliases:
+      - Military Forces of Sudan
+      - Military Forces of Sudan (2019-)
+      - Military Forces of Sudan (2019-) Air Force
+      - Sudanese Armed Forces
+      - SAF
+
+  - slug: rsf
+    name: Rapid Support Forces
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Rapid_Support_Forces
+    aliases:
+      - Rapid Support Forces
+      - RSF
+      - Janjaweed
+
+  # --- Myanmar Civil War ---
+  - slug: mm-state-forces
+    name: Tatmadaw (Myanmar Armed Forces)
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Tatmadaw
+    aliases:
+      - Military Forces of Myanmar
+      - Military Forces of Myanmar (2021-)
+      - Military Forces of Myanmar (2021-) Air Force
+      - Tatmadaw
+
+  - slug: pdf-myanmar
+    name: People's Defence Force (Myanmar)
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/People%27s_Defence_Force_(Myanmar)
+    aliases:
+      - PDF
+      - People's Defence Force
+      - People's Defense Force
+
+  - slug: nug
+    name: National Unity Government (Myanmar)
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/National_Unity_Government_of_Myanmar
+    aliases:
+      - National Unity Government
+      - NUG
+
+  - slug: aa-myanmar
+    name: Arakan Army
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Arakan_Army
+    aliases:
+      - Arakan Army
+      - AA
+
+  - slug: kia-myanmar
+    name: Kachin Independence Army
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Kachin_Independence_Army
+    aliases:
+      - Kachin Independence Army
+      - KIA
+
+  # --- Yemen Civil War ---
+  - slug: houthi
+    name: Houthi movement (Ansar Allah)
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Houthi_movement
+    aliases:
+      - Houthis
+      - Ansar Allah
+      - Houthi movement
+      - Military Forces of Yemen (2014-)
+      - Military Forces of Yemen (Sanaa)
+
+  - slug: ye-gov-forces
+    name: Yemeni government forces
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Yemeni_Armed_Forces
+    aliases:
+      - Military Forces of Yemen
+      - Military Forces of Yemen (Hadi)
+      - Military Forces of Yemen (Aden)
+      - Yemeni Armed Forces
+
+  - slug: saudi-coalition
+    name: Saudi-led coalition (Yemen)
+    type: coalition
+    wikipedia_url: https://en.wikipedia.org/wiki/Saudi_Arabian-led_intervention_in_Yemen
+    aliases:
+      - Saudi-led coalition
+      - Military Forces of Saudi Arabia
+      - Military Forces of Saudi Arabia (2015-) Air Force
+
+  # --- Mexico criminal violence ---
+  - slug: mx-state-forces
+    name: Military Forces of Mexico
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Mexican_Armed_Forces
+    aliases:
+      - Military Forces of Mexico
+      - Military Forces of Mexico (2018-)
+      - Military Forces of Mexico (2018-) Navy
+      - Military Forces of Mexico (2024-)
+      - Police Forces of Mexico
+      - Police Forces of Mexico (2018-)
+      - Police Forces of Mexico (2024-)
+
+  - slug: cjng
+    name: Cartel Jalisco Nueva Generación
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Jalisco_New_Generation_Cartel
+    aliases:
+      - CJNG
+      - Cartel Jalisco Nueva Generacion
+      - Jalisco New Generation Cartel
+
+  - slug: sinaloa-cartel
+    name: Sinaloa Cartel
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Sinaloa_Cartel
+    aliases:
+      - Sinaloa Cartel
+      - Cartel de Sinaloa
+
+  - slug: gulf-cartel
+    name: Gulf Cartel
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Gulf_Cartel
+    aliases:
+      - Gulf Cartel
+      - Cartel del Golfo
+
+  # --- Pakistan internal conflict ---
+  - slug: pk-state-forces
+    name: Military Forces of Pakistan
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Pakistan_Armed_Forces
+    aliases:
+      - Military Forces of Pakistan
+      - Military Forces of Pakistan (2022-)
+      - Police Forces of Pakistan
+      - Police Forces of Pakistan (2022-)
+
+  - slug: ttp
+    name: Tehrik-i-Taliban Pakistan
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Tehrik-i-Taliban_Pakistan
+    aliases:
+      - TTP
+      - Tehrik-i-Taliban Pakistan
+      - Pakistani Taliban
+
+  - slug: bla
+    name: Balochistan Liberation Army
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Balochistan_Liberation_Army
+    aliases:
+      - BLA
+      - Balochistan Liberation Army
+
+  # --- Syria post-Assad transition ---
+  - slug: sy-state-forces
+    name: Government of Syria (post-2024)
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Syrian_caretaker_government
+    aliases:
+      - Military Forces of Syria
+      - Military Forces of Syria (2024-)
+      - Police Forces of Syria (2024-)
+      - Government of Syria (2024-)
+
+  - slug: sdf-syria
+    name: Syrian Democratic Forces
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Syrian_Democratic_Forces
+    aliases:
+      - SDF
+      - Syrian Democratic Forces
+      - "QSD: Syrian Democratic Forces"
+
+  - slug: islamic-state
+    name: Islamic State
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Islamic_State
+    aliases:
+      - Islamic State
+      - Islamic State (Iraq and Syria)
+      - IS
+
+  - slug: tr-state-forces
+    name: Military Forces of Turkey
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Turkish_Armed_Forces
+    aliases:
+      - Military Forces of Turkey
+      - Military Forces of Turkey (2016-)
+
+  # --- Colombia armed conflict ---
+  - slug: co-state-forces
+    name: Military Forces of Colombia
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Military_Forces_of_Colombia
+    aliases:
+      - Military Forces of Colombia
+      - Military Forces of Colombia (2022-)
+      - Police Forces of Colombia
+      - Police Forces of Colombia (2022-)
+
+  - slug: eln
+    name: Ejército de Liberación Nacional (ELN)
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/National_Liberation_Army_(Colombia)
+    aliases:
+      - ELN
+      - "ELN: National Liberation Army"
+      - National Liberation Army (Colombia)
+
+  - slug: farc-dissidents
+    name: FARC dissident factions
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Dissident_FARC
+    aliases:
+      - FARC Dissidents
+      - FARC dissidents
+      - "EMC: Estado Mayor Central"
+      - Segunda Marquetalia
+
+  - slug: gulf-clan
+    name: Gulf Clan (AGC)
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Clan_del_Golfo
+    aliases:
+      - Gulf Clan
+      - Clan del Golfo
+      - "AGC: Autodefensas Gaitanistas de Colombia"
+
+  # --- Nigeria security crisis ---
+  - slug: ng-state-forces
+    name: Military Forces of Nigeria
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Nigerian_Armed_Forces
+    aliases:
+      - Military Forces of Nigeria
+      - Military Forces of Nigeria (2023-)
+      - Police Forces of Nigeria
+      - Police Forces of Nigeria (2023-)
+
+  - slug: boko-haram
+    name: Boko Haram
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Boko_Haram
+    aliases:
+      - Boko Haram
+      - "JAS: Jama'atu Ahl as-Sunnah lid-Da'wati wal-Jihad"
+
+  - slug: iswap
+    name: Islamic State West Africa Province
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Islamic_State%E2%80%93West_Africa_Province
+    aliases:
+      - ISWAP
+      - Islamic State West Africa Province
+
+  # --- Somalia ---
+  - slug: so-state-forces
+    name: Military Forces of Somalia
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Somali_Armed_Forces
+    aliases:
+      - Military Forces of Somalia
+      - Military Forces of Somalia (2022-)
+      - Police Forces of Somalia (2022-)
+
+  - slug: al-shabaab
+    name: Al-Shabaab
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Al-Shabaab_(militant_group)
+    aliases:
+      - Al Shabaab
+      - Al-Shabaab
+      - Harakat al-Shabaab al-Mujahideen
+
+  - slug: atmis
+    name: African Union Transition Mission in Somalia
+    type: coalition
+    wikipedia_url: https://en.wikipedia.org/wiki/African_Union_Transition_Mission_in_Somalia
+    aliases:
+      - ATMIS
+      - AUSSOM
+      - African Union Transition Mission in Somalia
+
+  # --- Cameroon ---
+  - slug: cm-state-forces
+    name: Military Forces of Cameroon
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Cameroon_Armed_Forces
+    aliases:
+      - Military Forces of Cameroon
+      - Military Forces of Cameroon (1982-)
+      - Police Forces of Cameroon (1982-)
+
+  - slug: ambazonia-separatists
+    name: Ambazonia Restoration Forces
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Anglophone_Crisis
+    aliases:
+      - Ambazonian Separatists
+      - Ambazonian Separatists (Cameroon)
+      - Ambazonian Separatists (Cameroon) Restoration Forces
+      - Ambazonia Defence Forces
+
+  # --- Haiti ---
+  - slug: ht-state-forces
+    name: Haitian National Police
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Haitian_National_Police
+    aliases:
+      - Police Forces of Haiti
+      - Police Forces of Haiti (2024-)
+      - Police Forces of Haiti (2024-) Protected Areas Security Brigade (BSAP)
+
+  - slug: viv-ansanm
+    name: Viv Ansanm gang coalition
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Viv_Ansanm
+    aliases:
+      - Viv Ansanm Gang
+      - Viv Ansanm
+      - G9 Family and Allies
+      - G-Pep
+
+  - slug: mss-haiti
+    name: Multinational Security Support mission (Kenya-led)
+    type: coalition
+    wikipedia_url: https://en.wikipedia.org/wiki/Multinational_Security_Support_Mission
+    aliases:
+      - Multinational Security Support
+      - MSS Mission
+
+  # --- Sahel insurgencies (shared across MLI, BFA, NER) ---
+  - slug: jnim
+    name: Jama'at Nasr al-Islam wal Muslimin (JNIM)
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Jama%27at_Nasr_al-Islam_wal_Muslimin
+    aliases:
+      - JNIM
+      - "JNIM: Group for Support of Islam and Muslims"
+      - Jama'at Nasr al-Islam wal Muslimin
+
+  - slug: issp
+    name: Islamic State Sahel Province
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Islamic_State_%E2%80%93_Sahel_Province
+    aliases:
+      - ISSP
+      - "Islamic State Sahel Province (ISSP)"
+      - Islamic State in the Greater Sahara
+      - ISGS
+
+  - slug: africa-corps
+    name: Russian Africa Corps
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Africa_Corps_(Russia)
+    aliases:
+      - Africa Corps
+      - Russian Africa Corps
+
+  # --- Mali ---
+  - slug: ml-state-forces
+    name: Military Forces of Mali
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Malian_Armed_Forces
+    aliases:
+      - Military Forces of Mali
+      - Military Forces of Mali (2021-)
+      - Police Forces of Mali (2021-)
+
+  # --- Burkina Faso ---
+  - slug: bf-state-forces
+    name: Military Forces of Burkina Faso
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Armed_Forces_of_Burkina_Faso
+    aliases:
+      - Military Forces of Burkina Faso
+      - Military Forces of Burkina Faso (2022-)
+      - Government of Burkina Faso (2022-)
+      - Police Forces of Burkina Faso (2022-)
+
+  - slug: vdp-burkina
+    name: Volunteers for the Defence of the Homeland (VDP)
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Volunteers_for_the_Defence_of_the_Homeland
+    aliases:
+      - VDP
+      - "VDP: Volunteer for Defense of Homeland"
+      - Volunteers for the Defence of the Homeland
+
+  # --- Niger ---
+  - slug: ne-state-forces
+    name: Military Forces of Niger
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Nigerien_Armed_Forces
+    aliases:
+      - Military Forces of Niger
+      - Military Forces of Niger (2023-)
+      - Police Forces of Niger (2023-)
+
+  # --- Ethiopia ---
+  - slug: et-state-forces
+    name: Ethiopian National Defense Force
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Ethiopian_National_Defense_Force
+    aliases:
+      - Military Forces of Ethiopia
+      - Military Forces of Ethiopia (2018-)
+      - Police Forces of Ethiopia (2018-)
+
+  - slug: fano-militia
+    name: Fano (Amhara militia)
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Fano_(militia)
+    aliases:
+      - Fano
+      - Fano Militia (Ethiopia)
+      - Fano Militia
+      - Amhara Fano
+
+  - slug: ola
+    name: Oromo Liberation Army
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Oromo_Liberation_Army
+    aliases:
+      - OLA
+      - "OLA: Oromo Liberation Army"
+      - Oromo Liberation Army
+
+  # --- South Sudan ---
+  - slug: ss-state-forces
+    name: South Sudan People's Defence Forces
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/South_Sudan_People%27s_Defence_Forces
+    aliases:
+      - Military Forces of South Sudan
+      - Military Forces of South Sudan (2011-)
+      - Police Forces of South Sudan (2011-)
+
+  - slug: splm-io
+    name: Sudan People's Liberation Movement-In Opposition
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Sudan_People%27s_Liberation_Movement-in-Opposition
+    aliases:
+      - SPLM-IO
+      - "SPLM-In Opposition: Sudan People's Liberation Movement-In Opposition"
+
+  # --- Central African Republic ---
+  - slug: caf-state-forces
+    name: Forces armées centrafricaines (FACA)
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Central_African_Armed_Forces
+    aliases:
+      - Military Forces of the Central African Republic
+      - Military Forces of the Central African Republic (2016-)
+      - Police Forces of the Central African Republic (2016-)
+
+  - slug: 3r-rebels
+    name: Return, Reclamation and Rehabilitation (3R)
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/3R_(militant_group)
+    aliases:
+      - 3R
+      - "RRR: Return, Reclamation and Rehabilitation"
+
+  - slug: cpc-car
+    name: Coalition of Patriots for Change (CPC)
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Coalition_of_Patriots_for_Change
+    aliases:
+      - CPC
+      - Coalition of Patriots for Change
+
+  # --- Mozambique (Cabo Delgado) ---
+  - slug: mz-state-forces
+    name: Forças Armadas de Defesa de Moçambique (FADM)
+    type: state
+    wikipedia_url: https://en.wikipedia.org/wiki/Mozambique_Defence_Armed_Forces
+    aliases:
+      - Military Forces of Mozambique
+      - Military Forces of Mozambique (2015-)
+      - Police Forces of Mozambique (2015-)
+
+  - slug: isis-mozambique
+    name: Islamic State Mozambique Province
+    type: non_state
+    wikipedia_url: https://en.wikipedia.org/wiki/Islamic_State_%E2%80%93_Mozambique_Province
+    aliases:
+      - ISIS Mozambique
+      - Islamic State Mozambique
+      - Islamic State Mozambique Province
+      - Ansar al-Sunna Wa Jama (Mozambique)
+
+  # --- Civilian / affected populations referenced across conflicts ---
+  - slug: civilians-generic
+    name: Civilians
+    type: other
+    aliases:
+      - Civilians

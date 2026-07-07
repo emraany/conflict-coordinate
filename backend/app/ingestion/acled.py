@@ -1,181 +1,54 @@
-"""ACLED ingestion source.
+"""ACLED lagged-event source — attaches detailed events to existing dots.
 
-Fetches recent armed-conflict events from ACLED, clusters them geographically
-with DBSCAN (haversine metric), and emits one `CrisisRecord` per cluster for
-the runner to upsert. This replaces the earlier country-year grouping, which
-produced one dot per country at its centroid — misrepresenting scattered
-conflicts (e.g. Somaliland vs. Mogadishu) as a single event.
+ACLED Researcher tier API exposes only a rolling ~12 months of event-level
+data. By the time we read it, every record is at least a year old. So the
+lagged source no longer creates dots — it attaches event detail (incident
+prose, actors, fatalities, geolocation) to dots whose identity was
+established by the real-time aggregated source.
 
-Each cluster's centroid becomes the dot location; its dominant ACLED `admin1`
-(state/province) field supplies the human-readable name. Noise points —
-events with no dense neighborhood — are dropped.
-
-Credentials come from `ACLED_USERNAME` + `ACLED_PASSWORD`. The adapter
-caches OAuth tokens to `backend/.cache/acled_token.json` to respect the
-24-hour access / 14-day refresh lifetimes.
-
-Neutrality: summaries are templated and count-based. Actors are copied
-verbatim from `actor1/actor2` fields; role is always `party` since ACLED
-does not distinguish mediators/observers and we refuse to label them.
+Lookup key: each ACLED event publishes `country` + `admin1`. We resolve via
+the `admin1_aliases` table to a canonical `(country_iso3, admin1_norm)` and
+attach to the matching `Crisis`. Events whose admin1 doesn't resolve are
+logged and dropped.
 """
 
 from __future__ import annotations
 
-import json
+import logging
 import re
-from collections import Counter
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
 from statistics import mean
 
 import httpx
-import numpy as np
 import pycountry
-from sklearn.cluster import DBSCAN
-from sqlalchemy import delete
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.ingestion import reliefweb, wikipedia
-from app.ingestion.base import (
-    ActorRef,
-    CrisisRecord,
-    EventRef,
-    IngestionSource,
-    SourceRef,
+from app.ingestion import wikipedia
+from app.ingestion.acled_auth import get_token
+from app.ingestion.base import IngestionSource
+from app.models import (
+    Actor,
+    ActorRole,
+    ActorType,
+    Crisis,
+    CrisisActor,
+    Source,
+    SourceType,
 )
-from app.models import Crisis
+from app.models.admin1 import Admin1Alias
+from app.models.event import CrisisEvent
 
-# Defensive upper bound on ACLED `notes` copied into `CrisisEvent.description`.
-# The column is `Text` (no hard limit) but very long notes occasionally appear
-# and we don't need novel-length prose in the timeline.
+logger = logging.getLogger(__name__)
+
 NOTES_MAX_CHARS = 2000
-
-EARTH_RADIUS_KM = 6371.0
-
 ACLED_READ_URL = "https://acleddata.com/api/acled/read"
-ACLED_OAUTH_URL = "https://acleddata.com/oauth/token"
-ACLED_CLIENT_ID = "acled"
 
-CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache"
-TOKEN_CACHE_PATH = CACHE_DIR / "acled_token.json"
-
-# Map ACLED event_type values to our coarse conflict_type taxonomy.
-# Kept descriptive, not interpretive.
-EVENT_TYPE_MAP = {
-    "Battles": "armed_clashes",
-    "Violence against civilians": "one_sided_violence",
-    "Explosions/Remote violence": "explosions_remote_violence",
-    "Riots": "civil_unrest",
-    "Protests": "civil_unrest",
-    "Strategic developments": "strategic_developments",
-}
-
-
-@dataclass
-class _CachedToken:
-    access_token: str
-    access_expires_at: datetime
-    refresh_token: str
-    refresh_expires_at: datetime
-
-    def access_valid(self, now: datetime) -> bool:
-        return now < self.access_expires_at - timedelta(seconds=60)
-
-    def refresh_valid(self, now: datetime) -> bool:
-        return now < self.refresh_expires_at - timedelta(seconds=60)
-
-
-def _load_cached_token() -> _CachedToken | None:
-    if not TOKEN_CACHE_PATH.exists():
-        return None
-    try:
-        data = json.loads(TOKEN_CACHE_PATH.read_text())
-        return _CachedToken(
-            access_token=data["access_token"],
-            access_expires_at=datetime.fromisoformat(data["access_expires_at"]),
-            refresh_token=data["refresh_token"],
-            refresh_expires_at=datetime.fromisoformat(data["refresh_expires_at"]),
-        )
-    except (KeyError, ValueError, json.JSONDecodeError):
-        return None
-
-
-def _save_cached_token(tok: _CachedToken) -> None:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    TOKEN_CACHE_PATH.write_text(
-        json.dumps(
-            {
-                "access_token": tok.access_token,
-                "access_expires_at": tok.access_expires_at.isoformat(),
-                "refresh_token": tok.refresh_token,
-                "refresh_expires_at": tok.refresh_expires_at.isoformat(),
-            }
-        )
-    )
-
-
-def _token_from_response(payload: dict, now: datetime) -> _CachedToken:
-    # ACLED returns `expires_in` (access, seconds) and `refresh_expires_in` (optional).
-    access_secs = int(payload.get("expires_in", 24 * 3600))
-    refresh_secs = int(payload.get("refresh_expires_in", 14 * 24 * 3600))
-    return _CachedToken(
-        access_token=payload["access_token"],
-        access_expires_at=now + timedelta(seconds=access_secs),
-        refresh_token=payload.get("refresh_token", ""),
-        refresh_expires_at=now + timedelta(seconds=refresh_secs),
-    )
-
-
-def _oauth_password_grant(client: httpx.Client, now: datetime) -> _CachedToken:
-    resp = client.post(
-        ACLED_OAUTH_URL,
-        data={
-            "username": settings.acled_username,
-            "password": settings.acled_password,
-            "grant_type": "password",
-            "client_id": ACLED_CLIENT_ID,
-        },
-        timeout=30.0,
-    )
-    resp.raise_for_status()
-    return _token_from_response(resp.json(), now)
-
-
-def _oauth_refresh_grant(
-    client: httpx.Client, refresh_token: str, now: datetime
-) -> _CachedToken:
-    resp = client.post(
-        ACLED_OAUTH_URL,
-        data={
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id": ACLED_CLIENT_ID,
-        },
-        timeout=30.0,
-    )
-    resp.raise_for_status()
-    return _token_from_response(resp.json(), now)
-
-
-def _get_token(client: httpx.Client) -> _CachedToken:
-    now = datetime.now(timezone.utc)
-    cached = _load_cached_token()
-    if cached and cached.access_valid(now):
-        return cached
-    if cached and cached.refresh_valid(now):
-        tok = _oauth_refresh_grant(client, cached.refresh_token, now)
-        _save_cached_token(tok)
-        return tok
-    tok = _oauth_password_grant(client, now)
-    _save_cached_token(tok)
-    return tok
-
-
-def _slugify(text: str) -> str:
-    text = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
-    return text[:120] or "unknown"
+# Display centroid is updated when the running mean drifts past this many
+# degrees (~5 km at the equator). Keeps dot positions visually responsive
+# without thrashing on every event.
+CENTROID_DRIFT_THRESHOLD_DEG = 0.05
 
 
 def _country_iso3(name: str | None) -> str | None:
@@ -188,13 +61,44 @@ def _country_iso3(name: str | None) -> str | None:
     return getattr(c, "alpha_3", None)
 
 
+def _normalize_admin1(value: str | None) -> str:
+    if not value:
+        return ""
+    import unicodedata
+
+    s = unicodedata.normalize("NFKD", value)
+    s = "".join(c for c in s if not unicodedata.combining(c)).lower().strip()
+    s = re.sub(r"\s+", " ", s)
+    s = re.sub(r"^the\s+", "", s)
+    s = re.sub(
+        r"\s+("
+        r"governorate|province|state|region|prefecture|district|wilayat|"
+        r"muhafazah|oblast|raion|voivodeship|canton|department|county|"
+        r"municipality|federal subject|federal district|territory"
+        r")$",
+        "",
+        s,
+    )
+    return s
+
+
+def _parse_coord(val: object) -> float | None:
+    if val is None or val == "":
+        return None
+    try:
+        return float(val)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 def _fetch_events(client: httpx.Client, access_token: str) -> list[dict]:
     lookback_days = settings.acled_lookback_days
     if settings.acled_reference_date:
         from datetime import date as _date
+
         end = _date.fromisoformat(settings.acled_reference_date)
     else:
-        end = datetime.now(timezone.utc).date()
+        end = datetime.now(UTC).date()
     start = end - timedelta(days=lookback_days)
     headers = {"Authorization": f"Bearer {access_token}"}
     out: list[dict] = []
@@ -220,113 +124,111 @@ def _fetch_events(client: httpx.Client, access_token: str) -> list[dict]:
         if len(batch) < 5000:
             break
         page += 1
-        if page > 40:  # 20k event ceiling per run, protect against runaway
+        if page > 40:
             break
     return out
 
 
-def _parse_coord(val: object) -> float | None:
-    if val is None or val == "":
+def _load_alias_map(db: Session) -> dict[tuple[str, str], str]:
+    """Bulk-load the entire (iso3, alias_norm) → canonical_norm map.
+    Replaces ~200k per-event SQL lookups with one query."""
+    rows = db.execute(
+        select(
+            Admin1Alias.country_iso3,
+            Admin1Alias.alias_norm,
+            Admin1Alias.canonical_admin1_norm,
+        )
+    ).all()
+    return {(iso3, alias): canon for iso3, alias, canon in rows}
+
+
+def _load_crisis_index(db: Session) -> dict[tuple[str, str], int]:
+    """Bulk-load (iso3, admin1_norm) → crisis_id mapping for current dots."""
+    rows = db.execute(
+        select(Crisis.country_iso3, Crisis.admin1_norm, Crisis.id).where(
+            Crisis.country_iso3.is_not(None), Crisis.admin1_norm.is_not(None)
+        )
+    ).all()
+    return {(iso3, admin1): cid for iso3, admin1, cid in rows}
+
+
+def _resolve_admin1_norm(
+    alias_map: dict[tuple[str, str], str], country_iso3: str, admin1: str
+) -> str | None:
+    """In-memory lookup against the prebuilt alias map; falls back to direct
+    normalization for new aliases not yet in the table."""
+    norm = _normalize_admin1(admin1)
+    if not norm:
         return None
-    try:
-        return float(val)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
+    return alias_map.get((country_iso3, norm), norm)
 
 
-def _cluster_events(events: list[dict]) -> list[list[dict]]:
-    """Group events into geographic clusters via DBSCAN on haversine distance.
-
-    Returns a list of buckets (each a list of events). Noise points — events
-    without a dense neighborhood of `min_samples` within `eps_km` — are
-    dropped, since a lone incident does not constitute a conflict cluster.
-    """
-    valid: list[dict] = []
-    coords: list[tuple[float, float]] = []
-    for ev in events:
-        lat = _parse_coord(ev.get("latitude"))
-        lng = _parse_coord(ev.get("longitude"))
-        if lat is None or lng is None:
-            continue
-        if not (-90.0 <= lat <= 90.0 and -180.0 <= lng <= 180.0):
-            continue
-        valid.append(ev)
-        coords.append((lat, lng))
-
-    if not valid:
-        return []
-
-    coords_rad = np.radians(np.asarray(coords, dtype=np.float64))
-    eps_rad = settings.acled_cluster_eps_km / EARTH_RADIUS_KM
-    labels = DBSCAN(
-        eps=eps_rad,
-        min_samples=settings.acled_cluster_min_samples,
-        metric="haversine",
-    ).fit_predict(coords_rad)
-
-    buckets: dict[int, list[dict]] = {}
-    for idx, label in enumerate(labels):
-        lbl = int(label)
-        if lbl == -1:
-            continue
-        buckets.setdefault(lbl, []).append(valid[idx])
-    return list(buckets.values())
-
-
-def _first_sentence(text: str, min_len: int = 30, max_len: int = 240) -> str | None:
-    """Return the first non-trivial sentence of `text`, trimmed for display.
-
-    Used for the representative-incident lede in cluster summaries. If no
-    sentence meets `min_len`, falls back to a hard truncation so we still
-    surface verbatim ACLED prose rather than silently dropping context.
-    """
-    if not text:
-        return None
-    cleaned = text.strip()
-    if not cleaned:
-        return None
-    for candidate in cleaned.split(". "):
-        piece = candidate.strip()
-        if len(piece) < min_len:
-            continue
-        if not piece.endswith((".", "!", "?")):
-            piece += "."
-        if len(piece) > max_len:
-            piece = piece[: max_len - 1].rstrip() + "…"
-        return piece
-    if len(cleaned) > max_len:
-        return cleaned[: max_len - 1].rstrip() + "…"
-    return cleaned
-
-
-def _pick_representative(bucket: list[dict]) -> dict | None:
-    """Select the event that best anchors the cluster summary — highest
-    fatalities first, then most recent. Events lacking a `notes` field are
-    skipped because we have nothing quotable from them."""
-    candidates = [ev for ev in bucket if (ev.get("notes") or "").strip()]
-    if not candidates:
-        return None
-    return max(
-        candidates,
-        key=lambda ev: (int(ev.get("fatalities") or 0), ev.get("event_date") or ""),
+def _ensure_acled_source(db: Session, crisis: Crisis) -> Source:
+    """Make sure the crisis has an ACLED canonical citation (origin='acled')
+    and return it. Idempotent — one row per crisis."""
+    existing = db.scalar(
+        select(Source).where(Source.crisis_id == crisis.id, Source.origin == "acled")
     )
+    if existing is not None:
+        return existing
+    src = Source(
+        crisis_id=crisis.id,
+        title="ACLED — Armed Conflict Location & Event Data",
+        url="https://acleddata.com/",
+        publisher="ACLED",
+        retrieved_at=datetime.now(UTC),
+        source_type=SourceType("primary"),
+        origin="acled",
+    )
+    db.add(src)
+    db.flush()
+    return src
 
 
-def _build_events(bucket: list[dict]) -> list[EventRef]:
-    refs: list[EventRef] = []
-    seen: set[str] = set()
-    for ev in bucket:
+def _existing_event_ids(db: Session, crisis_id: int) -> set[str]:
+    rows = db.scalars(
+        select(CrisisEvent.external_id).where(CrisisEvent.crisis_id == crisis_id)
+    ).all()
+    return {r for r in rows if r}
+
+
+def _existing_actors(db: Session, crisis_id: int) -> set[int]:
+    """Actor IDs already linked to this crisis (any origin, curated or not)."""
+    rows = db.scalars(
+        select(CrisisActor.actor_id).where(CrisisActor.crisis_id == crisis_id)
+    ).all()
+    return set(rows)
+
+
+def _attach_events_for_group(
+    db: Session,
+    crisis: Crisis,
+    events: list[dict],
+    wiki_client: httpx.Client | None,
+    actor_cache: dict[str, tuple[str | None, str | None]],
+) -> tuple[int, int]:
+    """Attach this group of ACLED events to one crisis. Returns
+    (events_attached, actors_attached)."""
+    src = _ensure_acled_source(db, crisis)
+    seen = _existing_event_ids(db, crisis.id)
+
+    inserted_events = 0
+    centroid_lats: list[float] = []
+    centroid_lngs: list[float] = []
+    for ev in events:
         event_id = (ev.get("event_id_cnty") or "").strip()
-        if not event_id or event_id in seen:
+        if not event_id:
+            continue
+        external_id = f"acled:{event_id}"
+        if external_id in seen:
             continue
         date_str = (ev.get("event_date") or "").strip()
         if not date_str:
             continue
         try:
-            occurred = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc)
+            occurred = datetime.fromisoformat(date_str).replace(tzinfo=UTC)
         except ValueError:
             continue
-        seen.add(event_id)
 
         notes = (ev.get("notes") or "").strip() or None
         if notes and len(notes) > NOTES_MAX_CHARS:
@@ -335,320 +237,308 @@ def _build_events(bucket: list[dict]) -> list[EventRef]:
         sub_type = (ev.get("sub_event_type") or "").strip()
         main_type = (ev.get("event_type") or "").strip()
         event_type = sub_type or main_type or None
-
-        # Prefer the most specific admin level available for the incident
-        # location label; fall back through admin3 → admin2 → location.
         location_name = (
             (ev.get("location") or "").strip()
             or (ev.get("admin3") or "").strip()
             or (ev.get("admin2") or "").strip()
             or None
         )
+        lat = _parse_coord(ev.get("latitude"))
+        lng = _parse_coord(ev.get("longitude"))
+        if lat is not None and lng is not None:
+            centroid_lats.append(lat)
+            centroid_lngs.append(lng)
 
-        refs.append(
-            EventRef(
-                external_id=f"acled:{event_id}",
+        db.add(
+            CrisisEvent(
+                crisis_id=crisis.id,
                 occurred_at=occurred,
                 event_type=event_type,
                 description=notes,
                 fatalities=int(ev.get("fatalities") or 0),
                 location_name=location_name,
-                lat=_parse_coord(ev.get("latitude")),
-                lng=_parse_coord(ev.get("longitude")),
-                source_index=0,  # ACLED citation is always sources[0]
-            )
-        )
-    return refs
-
-
-@dataclass
-class _EnrichmentContext:
-    """Per-run caches + shared HTTP client for Wikipedia/ReliefWeb lookups.
-
-    Caches are keyed to avoid duplicate network calls across the ~500
-    clusters in one ingest run (same actor names and countries recur).
-    """
-
-    wiki_client: httpx.Client
-    actor_cache: dict[str, tuple[str | None, str | None]]
-    background_cache: dict[str, tuple[str | None, str | None]]
-    reliefweb_client: httpx.Client
-    reliefweb_cache: dict[str, list[SourceRef]]
-
-
-def _aggregate_events_to_records(
-    events: list[dict], enrich: _EnrichmentContext | None = None
-) -> list[CrisisRecord]:
-    buckets = _cluster_events(events)
-    records: list[CrisisRecord] = []
-
-    for bucket in buckets:
-        lats = [_parse_coord(ev.get("latitude")) for ev in bucket]
-        lngs = [_parse_coord(ev.get("longitude")) for ev in bucket]
-        lats = [v for v in lats if v is not None]
-        lngs = [v for v in lngs if v is not None]
-        if not lats or not lngs:
-            continue
-        centroid_lat = mean(lats)
-        centroid_lng = mean(lngs)
-
-        country_counts = Counter(
-            (ev.get("country") or "").strip()
-            for ev in bucket
-            if (ev.get("country") or "").strip()
-        )
-        top_country = country_counts.most_common(1)[0][0] if country_counts else "Unknown"
-
-        admin1_counts = Counter(
-            (ev.get("admin1") or "").strip()
-            for ev in bucket
-            if (ev.get("admin1") or "").strip()
-        )
-        top_admin1 = admin1_counts.most_common(1)[0][0] if admin1_counts else None
-
-        dates = sorted(ev["event_date"] for ev in bucket if ev.get("event_date"))
-        if not dates:
-            continue
-        started = datetime.fromisoformat(dates[0]).replace(tzinfo=timezone.utc)
-        last = datetime.fromisoformat(dates[-1]).replace(tzinfo=timezone.utc)
-
-        type_counts = Counter(
-            ev.get("event_type") for ev in bucket if ev.get("event_type")
-        )
-        top_label = type_counts.most_common(1)[0][0] if type_counts else "Armed conflict"
-        fatalities = sum(int(ev.get("fatalities") or 0) for ev in bucket)
-
-        pair_counts: Counter[tuple[str, str]] = Counter()
-        for ev in bucket:
-            a1 = (ev.get("actor1") or "").strip()
-            a2 = (ev.get("actor2") or "").strip()
-            if a1 and a2:
-                pair_counts[(a1, a2)] += 1
-        top_pair = pair_counts.most_common(1)[0][0] if pair_counts else None
-
-        rep = _pick_representative(bucket)
-        rep_lede = _first_sentence(rep.get("notes") if rep else "")
-        rep_date = (rep.get("event_date") if rep else "") or ""
-
-        region = (bucket[0].get("region") or "").strip() or None
-        location_label = f"{top_admin1}, {top_country}" if top_admin1 else top_country
-        name = f"{location_label} — {top_label}"
-
-        # Lead with the real incident, not the count. The representative ACLED
-        # note carries the actual news; the counts are context that follows.
-        summary_parts: list[str] = []
-        if rep_lede and rep_date:
-            summary_parts.append(f'"{rep_lede}" — {location_label}, {rep_date}.')
-        else:
-            summary_parts.append(
-                f"{len(bucket)} incidents reported around {location_label} "
-                f"between {dates[0]} and {dates[-1]}."
-            )
-        if top_pair:
-            summary_parts.append(
-                f"Principal parties: {top_pair[0]} and {top_pair[1]}."
-            )
-        if rep_lede and rep_date:
-            summary_parts.append(
-                f"{len(bucket)} documented incidents, {dates[0]}–{dates[-1]};"
-                f" {fatalities} reported fatalities."
-                if fatalities > 0
-                else f"{len(bucket)} documented incidents, {dates[0]}–{dates[-1]}."
-            )
-        elif fatalities > 0:
-            summary_parts.append(f"{fatalities} reported fatalities.")
-        summary = " ".join(summary_parts)
-
-        # Stable external_id via quantized centroid (0.5° grid, ~55 km).
-        # Two DBSCAN-distinct clusters are typically ≥ eps_km apart, so they
-        # land in different cells; a cluster's centroid is unlikely to drift
-        # across a cell boundary between runs on similar data.
-        qlat = round(centroid_lat * 2) / 2
-        qlng = round(centroid_lng * 2) / 2
-        country_slug = _slugify(top_country)
-        admin1_slug = _slugify(top_admin1) if top_admin1 else "area"
-        external_id = f"acled:{country_slug}:{admin1_slug}:{qlat}:{qlng}"
-        slug = _slugify(f"{top_country}-{top_admin1 or 'area'}-{qlat}-{qlng}")
-
-        sources = _build_sources(bucket)
-        actors = _build_actors(bucket, sources, enrich)
-        event_refs = _build_events(bucket)
-
-        # Append ReliefWeb situation reports (country-level) and the Wikipedia
-        # conflict background. Both are cached across the run so the same
-        # country isn't fetched 100 times.
-        if enrich is not None:
-            iso3 = _country_iso3(top_country)
-            if iso3:
-                sitreps = reliefweb.fetch_situation_reports(
-                    iso3, enrich.reliefweb_cache, client=enrich.reliefweb_client
-                )
-                sources.extend(sitreps)
-            bg_actors = [top_pair[0], top_pair[1]] if top_pair else []
-            bg_extract, bg_url = wikipedia.fetch_conflict_background(
-                top_country,
-                bg_actors,
-                enrich.background_cache,
-                client=enrich.wiki_client,
-            )
-            if bg_extract and bg_url:
-                sources.append(
-                    SourceRef(
-                        title=f"Background: {top_country}",
-                        url=bg_url,
-                        publisher="Wikipedia",
-                        source_type="reference",
-                        body_text=bg_extract,
-                    )
-                )
-
-        records.append(
-            CrisisRecord(
+                lat=lat,
+                lng=lng,
                 external_id=external_id,
-                slug=slug,
-                name=name,
-                country=top_country,
-                region=region,
-                lat=centroid_lat,
-                lng=centroid_lng,
-                summary=summary,
-                status="active",
-                conflict_type=EVENT_TYPE_MAP.get(top_label, "armed_conflict"),
-                started_at=started,
-                last_event_at=last,
-                actors=actors,
-                sources=sources,
-                events=event_refs,
+                source_id=src.id,
             )
         )
-    return records
+        inserted_events += 1
+        seen.add(external_id)
+
+        latest = crisis.last_event_at
+        if latest is None or occurred > latest:
+            crisis.last_event_at = occurred
+
+    # Lazy display-centroid update: shift only if drift is meaningful.
+    if centroid_lats and centroid_lngs:
+        new_lat = float(mean(centroid_lats))
+        new_lng = float(mean(centroid_lngs))
+        if (
+            abs(new_lat - crisis.lat) > CENTROID_DRIFT_THRESHOLD_DEG
+            or abs(new_lng - crisis.lng) > CENTROID_DRIFT_THRESHOLD_DEG
+        ):
+            crisis.lat = new_lat
+            crisis.lng = new_lng
+            crisis.geom = f"SRID=4326;POINT({new_lng} {new_lat})"
+
+    actor_count = _attach_actors_for_group(
+        db, crisis, events, src, wiki_client, actor_cache
+    )
+    db.flush()
+    return inserted_events, actor_count
 
 
-def _build_sources(bucket: list[dict]) -> list[SourceRef]:
-    """Synthesize a sources list for one country-year bucket.
+def _attach_actors_for_group(
+    db: Session,
+    crisis: Crisis,
+    events: list[dict],
+    src: Source,
+    wiki_client: httpx.Client | None,
+    actor_cache: dict[str, tuple[str | None, str | None]],
+) -> int:
+    """Derive actors from event actor1/actor2 fields, dedupe, link.
 
-    First source is the ACLED dataset citation (always present). Following
-    that, one entry per unique publisher/source string. Source URLs from
-    individual events are not always present or reliable, so we link to
-    the ACLED site and name the publisher in the title.
+    Filters by document frequency (actor must appear in ≥ threshold of
+    events) so transient noise doesn't pollute the actor list. Always keeps
+    at least the top 3 most-mentioned actors so tiny groups still get content.
     """
-    refs: list[SourceRef] = [
-        SourceRef(
-            title="ACLED — Armed Conflict Location & Event Data",
-            url="https://acleddata.com/",
-            publisher="ACLED",
-            source_type="primary",
-        )
-    ]
-    seen: set[str] = set()
-    for ev in bucket:
-        name = (ev.get("source") or "").strip()
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        refs.append(
-            SourceRef(
-                title=f"{name[:460]} — cited by ACLED",
-                url="https://acleddata.com/",
-                publisher=name[:200],
-                source_type="news",
-            )
-        )
-        if len(refs) >= 20:
+    n = len(events)
+    if n == 0:
+        return 0
+    doc_freq: dict[str, int] = {}
+    display_for: dict[str, str] = {}
+    for ev in events:
+        seen_in_ev: set[str] = set()
+        for key in ("actor1", "actor2", "assoc_actor_1", "assoc_actor_2"):
+            raw = (ev.get(key) or "").strip()
+            if not raw:
+                continue
+            for piece in raw.split(";"):
+                piece = piece.strip()
+                if not piece:
+                    continue
+                norm = piece.lower()
+                if norm in seen_in_ev:
+                    continue
+                seen_in_ev.add(norm)
+                doc_freq[norm] = doc_freq.get(norm, 0) + 1
+                display_for.setdefault(norm, piece)
+
+    if not doc_freq:
+        return 0
+    threshold = max(1, int(settings.acled_topic_actor_freq_threshold * n))
+    ranked = sorted(doc_freq.items(), key=lambda kv: kv[1], reverse=True)
+    keep: list[tuple[str, str, int]] = []
+    for norm, freq in ranked:
+        if freq >= threshold or len(keep) < 3:
+            keep.append((norm, display_for[norm], freq))
+        if len(keep) >= 30:
             break
-    return refs
 
-
-def _build_actors(
-    bucket: list[dict],
-    sources: list[SourceRef],
-    enrich: _EnrichmentContext | None = None,
-) -> list[ActorRef]:
-    # Rank actors by frequency so the most central parties appear first and
-    # receive Wikipedia enrichment first (enrichment is capped per cluster).
-    name_counts: Counter[str] = Counter()
-    for ev in bucket:
-        for key in ("actor1", "actor2"):
-            n = (ev.get(key) or "").strip()
-            if n:
-                name_counts[n] += 1
-    ordered = [n for n, _ in name_counts.most_common()]
-
-    actors: list[ActorRef] = []
-    enriched_count = 0
-    for n in ordered:
+    existing_actor_ids = _existing_actors(db, crisis.id)
+    inserted = 0
+    enriched = 0
+    for _norm, display, _freq in keep:
+        actor = db.scalar(select(Actor).where(Actor.name == display))
         description: str | None = None
         wiki_url: str | None = None
-        # Enrich the top 5 actors per cluster. Beyond that, descriptions add
-        # marginal value and the Wikipedia fetch budget matters for a 500-
-        # cluster run. The shared cache still helps for common actors.
-        if enrich is not None and enriched_count < 5:
-            description, wiki_url = wikipedia.fetch_actor_summary(
-                n, enrich.actor_cache, client=enrich.wiki_client
-            )
-            if description:
-                enriched_count += 1
-        actors.append(
-            ActorRef(
-                name=n,
-                type="other",
-                role="party",
+        if wiki_client is not None and enriched < 5:
+            try:
+                description, wiki_url = wikipedia.fetch_actor_summary(
+                    display, actor_cache, client=wiki_client
+                )
+                if description:
+                    enriched += 1
+            except Exception:  # pragma: no cover — best-effort enrichment
+                logger.debug("wikipedia lookup failed for %s", display, exc_info=True)
+        if actor is None:
+            actor = Actor(
+                name=display,
+                type=ActorType("other"),
                 description=description,
                 wikipedia_url=wiki_url,
-                attributing_source_index=0,
+            )
+            db.add(actor)
+            db.flush()
+        else:
+            if not actor.description and description:
+                actor.description = description
+            if not actor.wikipedia_url and wiki_url:
+                actor.wikipedia_url = wiki_url
+        if actor.id in existing_actor_ids:
+            continue
+        db.add(
+            CrisisActor(
+                crisis_id=crisis.id,
+                actor_id=actor.id,
+                role=ActorRole("party"),
+                source_id=src.id,
+                admin_curated=False,
             )
         )
-        if len(actors) >= 30:
-            break
-    return actors
+        existing_actor_ids.add(actor.id)
+        inserted += 1
+    return inserted
 
 
-class ACLEDSource(IngestionSource):
-    name = "acled"
+def _purge_legacy_acled_clusters(db: Session) -> int:
+    """One-shot cleanup of the old DBSCAN-clustered ACLED crises (source_name
+    = 'acled' with no admin1_norm). They've been superseded by aggregated-
+    source dots; their slugs roll into `crisis_slug_aliases` first to keep
+    bookmarks alive."""
+    from app.models import CrisisSlugAlias
+
+    legacy = db.scalars(
+        select(Crisis).where(
+            Crisis.source_name == "acled",
+            Crisis.admin1_norm.is_(None),
+        )
+    ).all()
+    if not legacy:
+        return 0
+    deleted = 0
+    for crisis in legacy:
+        # Best-effort: try to map old slug → matching new (iso3, admin1) crisis.
+        # Without a derived admin1, we have nothing to map to. Fall back to
+        # country-level mapping via the country name.
+        target_iso3 = _country_iso3(crisis.country)
+        if target_iso3:
+            target = db.scalar(
+                select(Crisis)
+                .where(
+                    Crisis.country_iso3 == target_iso3,
+                    Crisis.admin1_norm.is_not(None),
+                )
+                .order_by(Crisis.last_event_at.desc().nullslast())
+                .limit(1)
+            )
+            if target is not None and crisis.slug != target.slug:
+                exists = db.scalar(
+                    select(CrisisSlugAlias).where(
+                        CrisisSlugAlias.old_slug == crisis.slug
+                    )
+                )
+                if exists is None:
+                    db.add(
+                        CrisisSlugAlias(old_slug=crisis.slug, crisis_id=target.id)
+                    )
+        db.delete(crisis)
+        deleted += 1
+    db.flush()
+    return deleted
+
+
+class ACLEDLaggedEventSource(IngestionSource):
+    name = "acled-lagged"
+    attach_only = True
+    owns_actors = True
+    owns_events = True
+    owns_sources = True
+
+    def fetch(self) -> list:  # attach-only — runner calls attach_events instead
+        return []
 
     def before_run(self, db: Session) -> None:
-        # Clusters are recomputed from scratch each run, so prior ACLED-sourced
-        # crises would otherwise linger as orphans. Delete them; relationships
-        # cascade to sources, actor links, and attached events.
         if not settings.acled_enabled:
             return
-        db.execute(delete(Crisis).where(Crisis.source_name == self.name))
-        db.flush()
+        purged = _purge_legacy_acled_clusters(db)
+        if purged:
+            logger.info("acled-lagged: purged %d legacy DBSCAN crises", purged)
 
-    def fetch(self) -> list[CrisisRecord]:
+    def attach_events(self, db: Session) -> dict:
         if not settings.acled_enabled:
-            return []
+            return {"attached": 0, "skipped": 0}
         if not settings.acled_username or not settings.acled_password:
-            return []
-        with httpx.Client() as client:
-            tok = _get_token(client)
+            return {"attached": 0, "skipped": 0}
+
+        with httpx.Client(timeout=60.0) as client:
+            tok = get_token(client)
             events = _fetch_events(client, tok.access_token)
 
-        # Shared clients + per-run caches so Wikipedia and ReliefWeb aren't
-        # hit redundantly across the ~500 clusters produced by DBSCAN.
-        wiki_client = httpx.Client(
-            timeout=httpx.Timeout(10.0, connect=5.0),
-            headers={
-                "User-Agent": "ConflictCoordinate/0.1 (https://github.com/emraany/conflict-coordinate)",
-                "Accept": "application/json",
-            },
-        )
-        reliefweb_client = httpx.Client(
-            timeout=httpx.Timeout(15.0, connect=5.0),
-            headers={
-                "User-Agent": "ConflictCoordinate/0.1 (https://github.com/emraany/conflict-coordinate)",
-                "Accept": "application/json",
-            },
-        )
-        enrich = _EnrichmentContext(
-            wiki_client=wiki_client,
-            actor_cache={},
-            background_cache={},
-            reliefweb_client=reliefweb_client,
-            reliefweb_cache={},
-        )
+        # Bulk-load lookup maps once — per-event SQL would be prohibitive
+        # with ~100k events.
+        alias_map = _load_alias_map(db)
+        crisis_index = _load_crisis_index(db)
+
+        # Group events by (iso3, admin1_norm).
+        grouped: dict[tuple[str, str], list[dict]] = {}
+        skipped_unmappable = 0
+        for ev in events:
+            country = (ev.get("country") or "").strip()
+            admin1 = (ev.get("admin1") or "").strip()
+            iso3 = _country_iso3(country)
+            if not iso3 or not admin1:
+                skipped_unmappable += 1
+                continue
+            admin1_norm = _resolve_admin1_norm(alias_map, iso3, admin1)
+            if not admin1_norm:
+                skipped_unmappable += 1
+                continue
+            grouped.setdefault((iso3, admin1_norm), []).append(ev)
+
+        # Wikipedia enrichment only when explicitly enabled — its 14k+ HTTP
+        # round-trips dominate the run otherwise. Re-enable per-actor by
+        # backfilling later.
+        wiki_client: httpx.Client | None = None
+        if settings.acled_lagged_wiki_enrich:
+            wiki_client = httpx.Client(
+                timeout=httpx.Timeout(10.0, connect=5.0),
+                headers={
+                    "User-Agent": (
+                        "ConflictCoordinate/0.1 "
+                        "(https://github.com/emraany/conflict-coordinate)"
+                    ),
+                    "Accept": "application/json",
+                },
+            )
+        actor_cache: dict[str, tuple[str | None, str | None]] = {}
+        attached_events = 0
+        attached_actors = 0
+        skipped_no_crisis = 0
+        groups_done = 0
         try:
-            return _aggregate_events_to_records(events, enrich)
+            for (iso3, admin1_norm), group in grouped.items():
+                crisis_id = crisis_index.get((iso3, admin1_norm))
+                if crisis_id is None:
+                    skipped_no_crisis += len(group)
+                    continue
+                # Lazy-load Crisis ORM row for the group only.
+                crisis = db.get(Crisis, crisis_id)
+                if crisis is None:
+                    skipped_no_crisis += len(group)
+                    continue
+                ev_count, actor_count = _attach_events_for_group(
+                    db, crisis, group, wiki_client, actor_cache
+                )
+                attached_events += ev_count
+                attached_actors += actor_count
+                groups_done += 1
+                # Periodic commit so progress is durable + memory bounded.
+                if groups_done % 100 == 0:
+                    db.commit()
+                    logger.info(
+                        "acled-lagged: progress %d/%d groups, %d events attached",
+                        groups_done,
+                        len(grouped),
+                        attached_events,
+                    )
         finally:
-            wiki_client.close()
-            reliefweb_client.close()
+            if wiki_client is not None:
+                wiki_client.close()
+
+        db.commit()
+        logger.info(
+            "acled-lagged: attached=%d (events) actors=%d skipped_no_crisis=%d "
+            "skipped_unmappable=%d groups=%d",
+            attached_events,
+            attached_actors,
+            skipped_no_crisis,
+            skipped_unmappable,
+            len(grouped),
+        )
+        return {
+            "attached": attached_events,
+            "skipped": skipped_no_crisis + skipped_unmappable,
+            "actors_attached": attached_actors,
+        }

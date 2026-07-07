@@ -56,6 +56,8 @@ export const statusColor = (status: string): string => {
       return colors.frozen;
     case "resolved":
       return colors.resolved;
+    case "emerging":
+      return colors.amberReserved;
     default:
       return colors.textMuted;
   }

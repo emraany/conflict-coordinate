@@ -1,8 +1,8 @@
 import { colors, statusColor } from "../styles/tokens";
-import type { CrisisStatus } from "../types";
+import type { ConflictStatus, CrisisStatus } from "../types";
 
 interface Props {
-  status: CrisisStatus;
+  status: CrisisStatus | ConflictStatus;
 }
 
 export function StatusChip({ status }: Props) {

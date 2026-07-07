@@ -1,11 +1,11 @@
 import { useState } from "react";
 
 import { colors, fonts, space } from "../styles/tokens";
-import type { CrisisEvent, Source } from "../types";
+import type { CrisisEvent } from "../types";
 
 interface Props {
   events: CrisisEvent[];
-  sources: Source[];
+  sourceIndex: Map<number, number>;
 }
 
 function formatDate(iso: string): string {
@@ -16,13 +16,7 @@ function formatDate(iso: string): string {
   }
 }
 
-function sourceRefNumber(sources: Source[], sourceId: number | null): number | null {
-  if (sourceId === null) return null;
-  const idx = sources.findIndex((s) => s.id === sourceId);
-  return idx >= 0 ? idx + 1 : null;
-}
-
-export function EventTimeline({ events, sources }: Props) {
+export function EventTimeline({ events, sourceIndex }: Props) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   if (events.length === 0) {
@@ -60,7 +54,7 @@ export function EventTimeline({ events, sources }: Props) {
       {sorted.map((ev, i) => {
         const isLast = i === sorted.length - 1;
         const num = String(i + 1).padStart(2, "0");
-        const ref = sourceRefNumber(sources, ev.source_id);
+        const ref = ev.source_id != null ? sourceIndex.get(ev.source_id) ?? null : null;
         const isOpen = expanded.has(ev.id);
         const description =
           (ev.description && ev.description.trim()) || null;

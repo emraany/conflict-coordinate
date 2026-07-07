@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,6 +14,58 @@ class CrisisStats(BaseModel):
     event_type_counts: dict[str, int]
     first_event_at: datetime | None
     last_event_at: datetime | None
+    # Recent-window aggregates from ACLED's weekly intensity table.
+    recent_4w_events: int = 0
+    recent_4w_fatalities: int = 0
+    # Population exposure is admin1-population for any week with ≥1 event,
+    # so MAX (not SUM) over weeks is the correct fold.
+    recent_population_exposed: int | None = None
+
+
+class IntensityWeek(BaseModel):
+    week_start: date
+    event_count_by_type: dict[str, int]
+    fatalities: int
+    population_exposure: int | None = None
+
+
+class EntityAggregate(BaseModel):
+    label: str
+    text: str
+    count: int
+    event_ids: list[int]
+
+
+class EntityGroup(BaseModel):
+    label: str
+    entities: list[EntityAggregate]
+
+
+class CrisisEntities(BaseModel):
+    crisis_id: int
+    total_mentions: int
+    groups: list[EntityGroup]
+
+
+class GraphNode(BaseModel):
+    id: str
+    label: str
+    mentions: int
+    community: int
+    centrality: float
+
+
+class GraphEdge(BaseModel):
+    source: str
+    target: str
+    weight: int
+
+
+class CrisisGraph(BaseModel):
+    crisis_id: int
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+    communities: list[list[str]]
 
 
 class CrisisBase(BaseModel):
@@ -55,10 +107,17 @@ class CrisisListItem(BaseModel):
     slug: str
     name: str
     country: str | None
+    country_iso3: str | None = None
+    admin1: str | None = None
+    region: str | None
     lat: float
     lng: float
     status: CrisisStatus
     conflict_type: str | None
+    started_at: datetime | None
+    last_event_at: datetime | None
+    event_count: int
+    total_fatalities: int
 
 
 class ActorLinkCreate(BaseModel):
@@ -83,9 +142,12 @@ class CrisisDetail(CrisisBase):
     id: int
     external_id: str | None
     source_name: str | None
+    country_iso3: str | None = None
+    admin1: str | None = None
     created_at: datetime
     updated_at: datetime
     actors: list[ActorLinkOut]
     sources: list[SourceOut]
     events: list[CrisisEventOut]
     stats: CrisisStats
+    intensity_52w: list[IntensityWeek] = Field(default_factory=list)

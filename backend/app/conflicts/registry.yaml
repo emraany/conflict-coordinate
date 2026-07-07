@@ -1,0 +1,591 @@
+# Conflict registry — the hand-curated baseline of dots shown on the globe.
+#
+# Each entry produces ONE Conflict row in the DB. Auto-discovered conflicts
+# (registry_source="wiki-auto") land in the same table with admin_curated
+# left false; admin can promote/demote later.
+#
+# Fields:
+#   slug              stable id; renaming = breaking
+#   name              display name
+#   conflict_type     free string — armed_conflict | civil_war | insurgency |
+#                     asymmetric | civil_unrest | maritime_incident |
+#                     humanitarian_emergency | diplomatic_crisis | …
+#   status            active | frozen | resolved | emerging
+#   primary_iso3      lead country (drives map fly-to)
+#   secondary_iso3s   other countries the conflict spans
+#   started_at        ISO date (YYYY-MM-DD)
+#   summary           verbatim Wikipedia paragraph or admin-authored — neutral
+#                     prose only, no LLM
+#   wikipedia_url     canonical Wikipedia article
+#   ucdp_conflict_id  optional UCDP cross-reference
+#   parties:          list of {actor: <canon-slug>, role: party|mediator|observer|affected}
+#   footprint:        list of {iso3: …, admin1: …}  -- admin1 in human form;
+#                     loader normalizes to admin1_norm
+#   routing:
+#     actor_patterns: list of SQL-LIKE patterns matched against ACLED actor*
+#                     fields. These take priority over admin1/country rules.
+#     admin1_patterns: list of "<iso3>:<admin1_norm>" — overrides for cells
+#                     not covered by `footprint` (rare).
+#     country_patterns: list of ISO3 codes — fallback when nothing else matches.
+
+conflicts:
+
+  - slug: russo-ukrainian-war
+    name: Russo-Ukrainian War
+    conflict_type: interstate
+    status: active
+    primary_iso3: UKR
+    secondary_iso3s: [RUS]
+    started_at: "2014-02-20"
+    wikipedia_url: https://en.wikipedia.org/wiki/Russo-Ukrainian_War
+    ucdp_conflict_id: "11973"
+    summary: >-
+      An interstate conflict between Russia and Ukraine that began with the
+      Russian annexation of Crimea in February 2014 and fighting in the
+      Donbas, then escalated into a full-scale Russian invasion of Ukraine
+      on 24 February 2022. Major frontlines have persisted across eastern
+      and southern Ukraine.
+    parties:
+      - { actor: ru-state-forces, role: party }
+      - { actor: ua-state-forces, role: party }
+      - { actor: dpr-forces,      role: party }
+      - { actor: lpr-forces,      role: party }
+      - { actor: wagner-group,    role: party }
+    footprint:
+      - { iso3: UKR, admin1: Donetsk }
+      - { iso3: UKR, admin1: Luhansk }
+      - { iso3: UKR, admin1: Kharkiv }
+      - { iso3: UKR, admin1: Kherson }
+      - { iso3: UKR, admin1: Zaporizhia }
+      - { iso3: UKR, admin1: Sumy }
+      - { iso3: UKR, admin1: Crimea }
+      - { iso3: UKR, admin1: Kyiv }
+      - { iso3: UKR, admin1: Kyiv City }
+      - { iso3: UKR, admin1: Mykolaiv }
+      - { iso3: UKR, admin1: Odesa }
+      - { iso3: UKR, admin1: Dnipropetrovsk }
+      - { iso3: UKR, admin1: Chernihiv }
+    routing:
+      actor_patterns:
+        - "Military Forces of Russia%"
+        - "Military Forces of Ukraine%"
+        - "Donetsk People's Republic%"
+        - "Luhansk People's Republic%"
+        # Wagner intentionally excluded — it appears in MLI/CAR/SDN events
+        # too; admin1 footprint catches Wagner events that occur inside UKR.
+
+  - slug: israel-hamas-war
+    name: Israel–Hamas War (Gaza)
+    conflict_type: asymmetric
+    status: active
+    primary_iso3: ISR
+    secondary_iso3s: [PSE, LBN]
+    started_at: "2023-10-07"
+    wikipedia_url: https://en.wikipedia.org/wiki/Israel%E2%80%93Hamas_war
+    summary: >-
+      An armed conflict that began with a Hamas-led attack on southern Israel
+      on 7 October 2023, followed by a sustained Israeli military operation
+      in the Gaza Strip. The war has produced a large humanitarian crisis
+      in Gaza and regional spillover involving Hezbollah in Lebanon.
+    parties:
+      - { actor: il-state-forces, role: party }
+      - { actor: hamas,           role: party }
+      - { actor: pij,             role: party }
+      - { actor: hezbollah,       role: party }
+    footprint:
+      - { iso3: ISR, admin1: HaDarom }
+      - { iso3: ISR, admin1: HaMerkaz }
+      - { iso3: ISR, admin1: HaZafon }
+      - { iso3: ISR, admin1: Jerusalem }
+      - { iso3: ISR, admin1: Tel Aviv }
+      - { iso3: PSE, admin1: Gaza Strip }
+      - { iso3: PSE, admin1: West Bank }
+      - { iso3: LBN, admin1: Al Nabatieh }
+      - { iso3: LBN, admin1: South }
+      - { iso3: LBN, admin1: Baalbek-Hermel }
+      - { iso3: LBN, admin1: Beirut }
+      - { iso3: LBN, admin1: Mount Lebanon }
+      - { iso3: LBN, admin1: Bekaa }
+      - { iso3: LBN, admin1: North }
+      - { iso3: LBN, admin1: Akkar }
+    routing:
+      actor_patterns:
+        - "Military Forces of Israel%"
+        - "Hamas%"
+        - "Al-Qassam%"
+        - "Palestinian Islamic Jihad%"
+        - "Hezbollah%"
+
+  - slug: sudan-saf-rsf-war
+    name: Sudanese Civil War (SAF–RSF)
+    conflict_type: civil_war
+    status: active
+    primary_iso3: SDN
+    started_at: "2023-04-15"
+    wikipedia_url: https://en.wikipedia.org/wiki/Sudanese_civil_war_(2023%E2%80%93present)
+    summary: >-
+      Armed conflict that broke out on 15 April 2023 between the Sudanese
+      Armed Forces (SAF) and the paramilitary Rapid Support Forces (RSF),
+      following a breakdown in the transition to civilian rule. Fighting has
+      displaced millions and triggered one of the world's largest
+      contemporary humanitarian emergencies.
+    parties:
+      - { actor: saf, role: party }
+      - { actor: rsf, role: party }
+    footprint:
+      - { iso3: SDN, admin1: Khartoum }
+      - { iso3: SDN, admin1: North Darfur }
+      - { iso3: SDN, admin1: South Darfur }
+      - { iso3: SDN, admin1: West Darfur }
+      - { iso3: SDN, admin1: East Darfur }
+      - { iso3: SDN, admin1: Central Darfur }
+      - { iso3: SDN, admin1: North Kordofan }
+      - { iso3: SDN, admin1: South Kordofan }
+      - { iso3: SDN, admin1: West Kordofan }
+      - { iso3: SDN, admin1: Al Jazirah }
+      - { iso3: SDN, admin1: Sennar }
+      - { iso3: SDN, admin1: White Nile }
+      - { iso3: SDN, admin1: Blue Nile }
+      - { iso3: SDN, admin1: Kassala }
+      - { iso3: SDN, admin1: Gedaref }
+      - { iso3: SDN, admin1: River Nile }
+    routing:
+      actor_patterns:
+        - "Military Forces of Sudan%"
+        - "Rapid Support Forces%"
+        - "Janjaweed%"
+      country_patterns:
+        - SDN
+
+  - slug: myanmar-civil-war
+    name: Myanmar Civil War
+    conflict_type: civil_war
+    status: active
+    primary_iso3: MMR
+    started_at: "2021-02-01"
+    wikipedia_url: https://en.wikipedia.org/wiki/Myanmar_civil_war_(2021%E2%80%93present)
+    summary: >-
+      Ongoing civil war that began following the February 2021 coup d'état by
+      Myanmar's military (the Tatmadaw). Pro-democracy resistance forces
+      under the National Unity Government, allied People's Defence Force
+      militias, and longstanding ethnic armed organizations are fighting the
+      junta across most of the country.
+    parties:
+      - { actor: mm-state-forces, role: party }
+      - { actor: pdf-myanmar,     role: party }
+      - { actor: nug,             role: party }
+      - { actor: aa-myanmar,      role: party }
+      - { actor: kia-myanmar,     role: party }
+    footprint:
+      - { iso3: MMR, admin1: Sagaing }
+      - { iso3: MMR, admin1: Magway }
+      - { iso3: MMR, admin1: Mandalay }
+      - { iso3: MMR, admin1: Bago-East }
+      - { iso3: MMR, admin1: Bago-West }
+      - { iso3: MMR, admin1: Chin }
+      - { iso3: MMR, admin1: Kachin }
+      - { iso3: MMR, admin1: Kayah }
+      - { iso3: MMR, admin1: Kayin }
+      - { iso3: MMR, admin1: Rakhine }
+      - { iso3: MMR, admin1: Shan-East }
+      - { iso3: MMR, admin1: Shan-North }
+      - { iso3: MMR, admin1: Shan-South }
+      - { iso3: MMR, admin1: Mon }
+      - { iso3: MMR, admin1: Tanintharyi }
+    routing:
+      actor_patterns:
+        - "Military Forces of Myanmar%"
+        - "People's Defence Force%"
+        - "Arakan Army%"
+        - "Kachin Independence Army%"
+      country_patterns:
+        - MMR
+
+  - slug: yemen-civil-war
+    name: Yemen Civil War
+    conflict_type: civil_war
+    status: active
+    primary_iso3: YEM
+    secondary_iso3s: [SAU]
+    started_at: "2014-09-21"
+    wikipedia_url: https://en.wikipedia.org/wiki/Yemeni_civil_war_(2014%E2%80%93present)
+    summary: >-
+      Multi-sided armed conflict that began in September 2014, when the Houthi
+      movement seized the Yemeni capital Sanaa, prompting a Saudi-led
+      coalition intervention from March 2015. The war has fractured Yemen
+      between Houthi-controlled north and internationally recognized
+      government-aligned south, with sustained humanitarian impact.
+    parties:
+      - { actor: houthi,          role: party }
+      - { actor: ye-gov-forces,   role: party }
+      - { actor: saudi-coalition, role: party }
+    footprint:
+      - { iso3: YEM, admin1: Sanaa }
+      - { iso3: YEM, admin1: Amanat al Asimah }
+      - { iso3: YEM, admin1: Marib }
+      - { iso3: YEM, admin1: Al Hudaydah }
+      - { iso3: YEM, admin1: Taizz }
+      - { iso3: YEM, admin1: Hajjah }
+      - { iso3: YEM, admin1: Aden }
+      - { iso3: YEM, admin1: Lahij }
+      - { iso3: YEM, admin1: Sadah }
+      - { iso3: YEM, admin1: Al Bayda }
+      - { iso3: YEM, admin1: Ibb }
+      - { iso3: YEM, admin1: Dhamar }
+      - { iso3: YEM, admin1: Al Jawf }
+      - { iso3: YEM, admin1: Shabwah }
+      - { iso3: YEM, admin1: Abyan }
+    routing:
+      actor_patterns:
+        - "Houthi%"
+        - "Ansar Allah%"
+        - "Military Forces of Yemen%"
+        - "Military Forces of Saudi Arabia%"
+      country_patterns:
+        - YEM
+
+  - slug: mexico-criminal-violence
+    name: Mexican drug war
+    conflict_type: asymmetric
+    status: active
+    primary_iso3: MEX
+    started_at: "2006-12-11"
+    wikipedia_url: https://en.wikipedia.org/wiki/Mexican_drug_war
+    summary: >-
+      An ongoing asymmetric conflict between the Mexican government, its
+      security forces, and the country's powerful drug-trafficking
+      organizations, alongside violence between the cartels themselves.
+      Major participants include the Sinaloa Cartel, Cartel Jalisco Nueva
+      Generación, and several smaller regional organizations operating
+      across most of Mexico's states.
+    parties:
+      - { actor: mx-state-forces, role: party }
+      - { actor: cjng,            role: party }
+      - { actor: sinaloa-cartel,  role: party }
+      - { actor: gulf-cartel,     role: party }
+    routing:
+      country_patterns:
+        - MEX
+
+  - slug: pakistan-internal-conflict
+    name: Pakistan internal armed conflict
+    conflict_type: insurgency
+    status: active
+    primary_iso3: PAK
+    started_at: "2007-12-14"
+    wikipedia_url: https://en.wikipedia.org/wiki/Insurgency_in_Khyber_Pakhtunkhwa
+    summary: >-
+      A multi-front internal conflict involving the Pakistani state, the
+      Tehrik-i-Taliban Pakistan (TTP) and allied jihadist factions in the
+      northwest, and the Balochistan Liberation Army and other Baloch
+      nationalist groups in the southwest. Activity is concentrated in
+      Khyber Pakhtunkhwa and Balochistan, with periodic spillover into
+      Sindh and Punjab.
+    parties:
+      - { actor: pk-state-forces, role: party }
+      - { actor: ttp,             role: party }
+      - { actor: bla,             role: party }
+    routing:
+      country_patterns:
+        - PAK
+
+  - slug: syria-post-assad-transition
+    name: Syrian post-Assad transition
+    conflict_type: civil_war
+    status: active
+    primary_iso3: SYR
+    started_at: "2024-12-08"
+    wikipedia_url: https://en.wikipedia.org/wiki/Syrian_civil_war
+    summary: >-
+      Following the rebel offensive that ended Bashar al-Assad's government
+      in December 2024, Syria has continued to see armed activity along
+      multiple lines: the new caretaker government and its allied factions,
+      Kurdish-led Syrian Democratic Forces in the northeast, Turkish-backed
+      armed factions in the north, residual Islamic State cells in the
+      eastern desert, and periodic Israeli and Turkish military operations
+      on Syrian territory.
+    parties:
+      - { actor: sy-state-forces, role: party }
+      - { actor: sdf-syria,       role: party }
+      - { actor: tr-state-forces, role: party }
+      - { actor: il-state-forces, role: party }
+      - { actor: islamic-state,   role: party }
+    routing:
+      country_patterns:
+        - SYR
+
+  - slug: colombia-armed-conflict
+    name: Colombian internal armed conflict
+    conflict_type: insurgency
+    status: active
+    primary_iso3: COL
+    started_at: "1964-05-27"
+    wikipedia_url: https://en.wikipedia.org/wiki/Colombian_conflict
+    summary: >-
+      Long-running internal armed conflict involving the Colombian state
+      and a constellation of non-state armed groups. After the 2016 peace
+      accord with the FARC, fighting has continued with FARC dissident
+      factions, the National Liberation Army (ELN), and the Gulf Clan,
+      concentrated in the country's western, southwestern, and Caribbean
+      coastal departments.
+    parties:
+      - { actor: co-state-forces,  role: party }
+      - { actor: eln,              role: party }
+      - { actor: farc-dissidents,  role: party }
+      - { actor: gulf-clan,        role: party }
+    routing:
+      country_patterns:
+        - COL
+
+  - slug: nigeria-security-crisis
+    name: Nigerian security crisis
+    conflict_type: insurgency
+    status: active
+    primary_iso3: NGA
+    started_at: "2009-07-26"
+    wikipedia_url: https://en.wikipedia.org/wiki/Boko_Haram_insurgency
+    summary: >-
+      A multi-front security crisis spanning Nigeria's northeast (Boko
+      Haram and the Islamic State West Africa Province in Borno, Yobe and
+      Adamawa), northwest (armed banditry and emerging jihadist factions
+      in Katsina, Zamfara, Sokoto and Kaduna), and Middle Belt
+      (farmer–herder violence and intercommunal clashes in Plateau, Benue
+      and Niger). The Nigerian armed forces operate alongside Multinational
+      Joint Task Force contingents in the Lake Chad basin.
+    parties:
+      - { actor: ng-state-forces, role: party }
+      - { actor: boko-haram,      role: party }
+      - { actor: iswap,           role: party }
+    footprint:
+      - { iso3: NGA, admin1: Borno }
+      - { iso3: NGA, admin1: Yobe }
+      - { iso3: NGA, admin1: Adamawa }
+      - { iso3: NGA, admin1: Katsina }
+      - { iso3: NGA, admin1: Zamfara }
+      - { iso3: NGA, admin1: Sokoto }
+      - { iso3: NGA, admin1: Kaduna }
+      - { iso3: NGA, admin1: Kebbi }
+      - { iso3: NGA, admin1: Niger }
+      - { iso3: NGA, admin1: Plateau }
+      - { iso3: NGA, admin1: Benue }
+      - { iso3: NGA, admin1: Nasarawa }
+      - { iso3: NGA, admin1: Taraba }
+
+  - slug: somalia-conflict
+    name: Somali Civil War
+    conflict_type: insurgency
+    status: active
+    primary_iso3: SOM
+    started_at: "2009-01-31"
+    wikipedia_url: https://en.wikipedia.org/wiki/Somali_civil_war_(2009%E2%80%93present)
+    summary: >-
+      Ongoing armed conflict between the Federal Government of Somalia,
+      backed by the African Union Transition Mission in Somalia (ATMIS,
+      succeeded by AUSSOM), and the al-Qaeda-aligned militant group
+      Al-Shabaab, with a smaller Islamic State cell active in Puntland.
+      Fighting is concentrated in southern and central Somalia.
+    parties:
+      - { actor: so-state-forces, role: party }
+      - { actor: al-shabaab,      role: party }
+      - { actor: atmis,           role: party }
+    routing:
+      country_patterns:
+        - SOM
+
+  - slug: cameroon-internal-conflict
+    name: Cameroon internal conflicts
+    conflict_type: insurgency
+    status: active
+    primary_iso3: CMR
+    started_at: "2016-10-09"
+    wikipedia_url: https://en.wikipedia.org/wiki/Anglophone_Crisis
+    summary: >-
+      Two overlapping armed conflicts inside Cameroon: the Anglophone
+      Crisis between government forces and Ambazonian separatist groups
+      in the Northwest and Southwest regions, and the spillover of the
+      Boko Haram and Islamic State West Africa Province insurgency into
+      the Far North region.
+    parties:
+      - { actor: cm-state-forces,      role: party }
+      - { actor: ambazonia-separatists, role: party }
+      - { actor: boko-haram,           role: party }
+    routing:
+      country_patterns:
+        - CMR
+
+  - slug: haiti-gang-conflict
+    name: Haitian gang conflict
+    conflict_type: insurgency
+    status: active
+    primary_iso3: HTI
+    started_at: "2018-07-06"
+    wikipedia_url: https://en.wikipedia.org/wiki/Haitian_crisis_(2018%E2%80%93present)
+    summary: >-
+      Sustained armed conflict between the Haitian National Police and a
+      coalition of armed gangs operating across Port-au-Prince and the
+      surrounding Ouest department. In 2024 the Viv Ansanm alliance
+      consolidated control over much of the capital, prompting the
+      deployment of a Kenya-led Multinational Security Support mission.
+    parties:
+      - { actor: ht-state-forces, role: party }
+      - { actor: viv-ansanm,      role: party }
+      - { actor: mss-haiti,       role: party }
+    routing:
+      country_patterns:
+        - HTI
+
+  - slug: mali-insurgency
+    name: Mali insurgency
+    conflict_type: insurgency
+    status: active
+    primary_iso3: MLI
+    started_at: "2012-01-16"
+    wikipedia_url: https://en.wikipedia.org/wiki/Mali_War
+    summary: >-
+      Insurgency that began with a Tuareg uprising in northern Mali in
+      January 2012 and was hijacked by jihadist factions later that year.
+      The current phase involves the Malian Armed Forces and allied
+      Russian Africa Corps personnel against Jama'at Nasr al-Islam wal
+      Muslimin (JNIM) and the Islamic State Sahel Province (ISSP), with
+      fighting concentrated in the Mopti, Ségou, Timbuktu, Gao and
+      Ménaka regions.
+    parties:
+      - { actor: ml-state-forces, role: party }
+      - { actor: jnim,            role: party }
+      - { actor: issp,            role: party }
+      - { actor: africa-corps,    role: party }
+    routing:
+      country_patterns:
+        - MLI
+
+  - slug: burkina-faso-insurgency
+    name: Burkina Faso insurgency
+    conflict_type: insurgency
+    status: active
+    primary_iso3: BFA
+    started_at: "2015-08-04"
+    wikipedia_url: https://en.wikipedia.org/wiki/Jihadist_insurgency_in_Burkina_Faso
+    summary: >-
+      Jihadist insurgency in Burkina Faso pitting the Burkinabè armed
+      forces and the Volunteers for the Defence of the Homeland (VDP) —
+      a state-organized militia — against Jama'at Nasr al-Islam wal
+      Muslimin (JNIM) and the Islamic State Sahel Province (ISSP).
+      Fighting has spread from the Sahel region in the north across most
+      of the country.
+    parties:
+      - { actor: bf-state-forces, role: party }
+      - { actor: vdp-burkina,     role: party }
+      - { actor: jnim,            role: party }
+      - { actor: issp,            role: party }
+    routing:
+      country_patterns:
+        - BFA
+
+  - slug: niger-insurgency
+    name: Niger insurgency
+    conflict_type: insurgency
+    status: active
+    primary_iso3: NER
+    started_at: "2015-02-06"
+    wikipedia_url: https://en.wikipedia.org/wiki/Jihadist_insurgency_in_Niger
+    summary: >-
+      Jihadist insurgency in Niger involving the Nigerien armed forces
+      against the Islamic State Sahel Province and Jama'at Nasr al-Islam
+      wal Muslimin in the western Tillabéri and Tahoua regions, and
+      against Boko Haram and the Islamic State West Africa Province in
+      the southeastern Diffa region near Lake Chad.
+    parties:
+      - { actor: ne-state-forces, role: party }
+      - { actor: jnim,            role: party }
+      - { actor: issp,            role: party }
+      - { actor: boko-haram,      role: party }
+      - { actor: iswap,           role: party }
+    routing:
+      country_patterns:
+        - NER
+
+  - slug: ethiopia-internal-conflict
+    name: Ethiopian internal armed conflict
+    conflict_type: insurgency
+    status: active
+    primary_iso3: ETH
+    started_at: "2018-04-02"
+    wikipedia_url: https://en.wikipedia.org/wiki/War_in_Amhara
+    summary: >-
+      Active insurgencies inside Ethiopia after the 2022 Pretoria
+      cessation-of-hostilities ended the Tigray War. In the Amhara
+      region, the federal government is fighting Fano militia factions
+      that mobilized after the planned dissolution of regional special
+      forces. In Oromia, the Oromo Liberation Army (OLA) continues a
+      long-running insurgency against federal and regional forces.
+    parties:
+      - { actor: et-state-forces, role: party }
+      - { actor: fano-militia,    role: party }
+      - { actor: ola,             role: party }
+    routing:
+      country_patterns:
+        - ETH
+
+  - slug: south-sudan-conflict
+    name: South Sudan internal conflict
+    conflict_type: civil_war
+    status: active
+    primary_iso3: SSD
+    started_at: "2013-12-15"
+    wikipedia_url: https://en.wikipedia.org/wiki/South_Sudanese_Civil_War
+    summary: >-
+      A protracted internal conflict that erupted in December 2013
+      between the South Sudan People's Defence Forces aligned with
+      President Salva Kiir and the Sudan People's Liberation
+      Movement-In Opposition (SPLM-IO) led by Riek Machar, alongside
+      widespread intercommunal violence between Dinka, Nuer, Murle and
+      other ethnic groups. A 2018 revitalized peace agreement has held
+      formally while localized fighting and ethnic clashes continue.
+    parties:
+      - { actor: ss-state-forces, role: party }
+      - { actor: splm-io,         role: party }
+    routing:
+      country_patterns:
+        - SSD
+
+  - slug: car-internal-conflict
+    name: Central African Republic Civil War
+    conflict_type: civil_war
+    status: active
+    primary_iso3: CAF
+    started_at: "2012-12-10"
+    wikipedia_url: https://en.wikipedia.org/wiki/Central_African_Republic_Civil_War
+    summary: >-
+      Long-running civil war involving the Central African Armed Forces
+      (FACA) and allied Russian Africa Corps personnel against the
+      Coalition of Patriots for Change (CPC) and other armed factions,
+      including the 3R group. The conflict has split into a series of
+      regional insurgencies across the country's northwest, north and
+      east.
+    parties:
+      - { actor: caf-state-forces, role: party }
+      - { actor: cpc-car,          role: party }
+      - { actor: 3r-rebels,        role: party }
+      - { actor: africa-corps,     role: party }
+    routing:
+      country_patterns:
+        - CAF
+
+  - slug: mozambique-cabo-delgado
+    name: Cabo Delgado insurgency
+    conflict_type: insurgency
+    status: active
+    primary_iso3: MOZ
+    started_at: "2017-10-05"
+    wikipedia_url: https://en.wikipedia.org/wiki/Insurgency_in_Cabo_Delgado
+    summary: >-
+      Jihadist insurgency in Mozambique's northernmost Cabo Delgado
+      province, fought between the Mozambican armed forces — supported
+      at various times by Rwandan and Southern African Development
+      Community (SAMIM) contingents — and the Islamic State Mozambique
+      Province (locally known as Ansar al-Sunna Wa Jama).
+    parties:
+      - { actor: mz-state-forces, role: party }
+      - { actor: isis-mozambique, role: party }
+    footprint:
+      - { iso3: MOZ, admin1: Cabo Delgado }
