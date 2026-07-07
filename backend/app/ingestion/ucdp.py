@@ -25,13 +25,13 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
-import pycountry
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.ingestion.acled import _normalize_admin1
 from app.ingestion.base import CrisisRecord, IngestionSource
+from app.ingestion.countries import country_iso3 as _country_iso3
 from app.models import Crisis, Source, SourceType
 from app.models.admin1 import Admin1Alias
 from app.models.event import CrisisEvent
@@ -58,16 +58,6 @@ def _parse_coord(val: object) -> float | None:
         return float(val)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
-
-
-def _country_iso3(name: str | None) -> str | None:
-    if not name:
-        return None
-    try:
-        c = pycountry.countries.lookup(name)
-    except LookupError:
-        return None
-    return getattr(c, "alpha_3", None)
 
 
 def _cutoff_date(lookback_days: int) -> datetime:

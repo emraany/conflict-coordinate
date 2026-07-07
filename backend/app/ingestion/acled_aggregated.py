@@ -40,7 +40,6 @@ from statistics import mean
 
 import httpx
 import openpyxl
-import pycountry
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -52,6 +51,7 @@ from app.ingestion.base import (
     IntensityRow,
     SourceRef,
 )
+from app.ingestion.countries import country_iso3 as _country_iso3
 from app.models import Admin1Alias, Crisis
 
 logger = logging.getLogger(__name__)
@@ -151,16 +151,6 @@ def _normalize_admin1(value: str) -> str:
         s,
     )
     return s
-
-
-def _country_iso3(name: str | None) -> str | None:
-    if not name:
-        return None
-    try:
-        c = pycountry.countries.lookup(name)
-    except LookupError:
-        return None
-    return getattr(c, "alpha_3", None)
 
 
 def _slugify(text: str) -> str:

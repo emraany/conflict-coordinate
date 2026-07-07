@@ -20,7 +20,6 @@ from datetime import UTC, datetime, timedelta
 from statistics import mean
 
 import httpx
-import pycountry
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -28,6 +27,7 @@ from app.config import settings
 from app.ingestion import wikipedia
 from app.ingestion.acled_auth import get_token
 from app.ingestion.base import IngestionSource
+from app.ingestion.countries import country_iso3 as _country_iso3
 from app.models import (
     Actor,
     ActorRole,
@@ -49,16 +49,6 @@ ACLED_READ_URL = "https://acleddata.com/api/acled/read"
 # degrees (~5 km at the equator). Keeps dot positions visually responsive
 # without thrashing on every event.
 CENTROID_DRIFT_THRESHOLD_DEG = 0.05
-
-
-def _country_iso3(name: str | None) -> str | None:
-    if not name:
-        return None
-    try:
-        c = pycountry.countries.lookup(name)
-    except LookupError:
-        return None
-    return getattr(c, "alpha_3", None)
 
 
 def _normalize_admin1(value: str | None) -> str:
