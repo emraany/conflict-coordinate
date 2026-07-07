@@ -573,7 +573,7 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
               <span style={{ color: colors.textDim }}>·</span>
               <span>
                 {detail.status === "active"
-                  ? "active — events this month"
+                  ? `active — last recorded activity ${formatYmd(detail.last_event_at)}`
                   : detail.status === "frozen"
                     ? `dormant — last activity ${formatMonth(detail.last_event_at)}`
                     : detail.status === "emerging"

@@ -40,8 +40,8 @@ from statistics import mean
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.conflicts.routing import build_routing_index, route_event
 from app.config import settings
+from app.conflicts.routing import build_routing_index, route_event
 from app.db import SessionLocal
 from app.models import (
     Actor,
@@ -151,8 +151,15 @@ def backfill(commit: bool, flip_legacy: bool) -> dict:
         routed_per_conflict: dict[int, int] = defaultdict(int)
         coords_per_conflict: dict[int, list[tuple[float, float]]] = defaultdict(list)
         last_event_per_conflict: dict[int, datetime] = {}
+        crises_per_conflict: dict[int, set[int]] = defaultdict(set)
+        # (occurred_at, fatalities) per conflict — the 4w intensity window is
+        # anchored on each conflict's own latest event, not wall-clock now:
+        # ACLED's event API is embargoed ~13 months, so a wall-clock window
+        # would read 0 for every ACLED-only conflict.
+        dated_events_per_conflict: dict[int, list[tuple[datetime, int]]] = defaultdict(
+            list
+        )
         ref_now = _reference_now()
-        four_weeks_ago = ref_now - timedelta(weeks=4)
         intensity_events: dict[int, int] = defaultdict(int)
         intensity_fatalities: dict[int, int] = defaultdict(int)
 
@@ -186,6 +193,7 @@ def backfill(commit: bool, flip_legacy: bool) -> dict:
                 continue
             updates.append((row.id, conflict_id))
             routed_per_conflict[conflict_id] += 1
+            crises_per_conflict[conflict_id].add(row.crisis_id)
             if row.lat is not None and row.lng is not None:
                 coords_per_conflict[conflict_id].append(
                     (float(row.lat), float(row.lng))
@@ -194,9 +202,18 @@ def backfill(commit: bool, flip_legacy: bool) -> dict:
                 prev = last_event_per_conflict.get(conflict_id)
                 if prev is None or row.occurred_at > prev:
                     last_event_per_conflict[conflict_id] = row.occurred_at
-                if row.occurred_at >= four_weeks_ago:
-                    intensity_events[conflict_id] += 1
-                    intensity_fatalities[conflict_id] += int(row.fatalities or 0)
+                dated_events_per_conflict[conflict_id].append(
+                    (row.occurred_at, int(row.fatalities or 0))
+                )
+
+        # 4w intensity, anchored per conflict on its own latest event.
+        for cid, dated in dated_events_per_conflict.items():
+            anchor = max(d for d, _ in dated)
+            window_start = anchor - timedelta(weeks=4)
+            for occurred, fatalities in dated:
+                if occurred >= window_start:
+                    intensity_events[cid] += 1
+                    intensity_fatalities[cid] += fatalities
 
         # Pull conflict slugs so the report is human-readable.
         slug_by_id = {
@@ -258,6 +275,18 @@ def backfill(commit: bool, flip_legacy: bool) -> dict:
 
         # 2. Compute conflict centroids — events first, footprint cells fallback.
         footprint_centroids = _load_footprint_centroids(db)
+        # crisis_id → latest aggregated week. The ACLED event API is embargoed
+        # ~13 months but the aggregated weekly data is current; a conflict's
+        # "last observed activity" must consider both, or the stale sweep
+        # freezes conflicts whose aggregates show current activity.
+        intensity_week_by_crisis: dict[int, datetime] = {
+            row.id: row.intensity_last_week_at
+            for row in db.execute(
+                select(Crisis.id, Crisis.intensity_last_week_at).where(
+                    Crisis.intensity_last_week_at.is_not(None)
+                )
+            ).all()
+        }
         conflicts = db.scalars(select(Conflict)).all()
         for c in conflicts:
             pts = coords_per_conflict.get(c.id, [])
@@ -270,6 +299,10 @@ def backfill(commit: bool, flip_legacy: bool) -> dict:
                 c.geom = f"SRID=4326;POINT({c.lng} {c.lat})"
 
             last = last_event_per_conflict.get(c.id)
+            for crisis_id in crises_per_conflict.get(c.id, ()):
+                wk = intensity_week_by_crisis.get(crisis_id)
+                if wk is not None and (last is None or wk > last):
+                    last = wk
             if last is not None and (c.last_event_at is None or last > c.last_event_at):
                 c.last_event_at = last
             c.intensity_4w_events = intensity_events.get(c.id, 0)

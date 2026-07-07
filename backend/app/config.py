@@ -39,7 +39,11 @@ class Settings(BaseSettings):
     ucdp_enabled: bool = Field(default=False)
     ucdp_token: str = Field(default="")
     ucdp_lookback_days: int = Field(default=730)
-    ucdp_ged_version: str = Field(default="25.1")
+    ucdp_ged_version: str = Field(default="26.1")
+    # Monthly GED candidate releases carrying events past the curated cutoff
+    # (comma-separated version strings, e.g. "26.0.1,26.0.2"). Confirm each
+    # exists via /gedevents/{v} before adding — unknown versions 404.
+    ucdp_candidate_versions: str = Field(default="")
     # Active crises whose last_event_at is older than this many days are
     # demoted to `frozen` after each ingest run. 0 disables the sweep.
     status_stale_days: int = Field(default=90)

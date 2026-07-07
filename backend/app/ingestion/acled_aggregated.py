@@ -44,7 +44,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.ingestion.acled_auth import CACHE_DIR, get_token
+from app.ingestion.acled_auth import CACHE_DIR, get_fresh_token, get_token
 from app.ingestion.base import (
     CrisisRecord,
     IngestionSource,
@@ -545,8 +545,16 @@ class ACLEDAggregatedSource(IngestionSource):
 
         with httpx.Client(timeout=120.0, headers={"User-Agent": USER_AGENT}) as client:
             tok = get_token(client)
+            regranted = False
             for region in REGIONS:
                 url = _discover_region_xlsx_url(client, region, tok.access_token)
+                if not url and not regranted:
+                    # A dead cached token 401s the landing page (which we log
+                    # but otherwise swallow). Force one password grant and
+                    # retry before giving up on the region.
+                    tok = get_fresh_token(client)
+                    regranted = True
+                    url = _discover_region_xlsx_url(client, region, tok.access_token)
                 if not url:
                     logger.warning("acled-agg: %s — no xlsx URL discovered", region)
                     continue

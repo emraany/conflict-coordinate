@@ -64,14 +64,10 @@ def _cutoff_date(lookback_days: int) -> datetime:
     return datetime.now(UTC) - timedelta(days=lookback_days)
 
 
-def _fetch_events(client: httpx.Client) -> list[dict]:
-    token = settings.ucdp_token
-    version = settings.ucdp_ged_version
-    headers = {"x-ucdp-access-token": token}
-    cutoff = _cutoff_date(settings.ucdp_lookback_days)
-    cutoff_str = cutoff.date().isoformat()
-
-    all_events: list[dict] = []
+def _fetch_version(
+    client: httpx.Client, headers: dict, version: str, cutoff_str: str
+) -> list[dict]:
+    events: list[dict] = []
     page = 1
     page_ceil = 200
     while True:
@@ -88,19 +84,39 @@ def _fetch_events(client: httpx.Client) -> list[dict]:
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
-            logger.warning("ucdp fetch error page=%s: %s", page, exc)
+            logger.warning("ucdp fetch error version=%s page=%s: %s", version, page, exc)
             break
         payload = resp.json()
         batch: list[dict] = payload.get("Result") or []
         if not batch:
             break
-        all_events.extend(batch)
+        events.extend(batch)
         if len(batch) < 1000:
             break
         page += 1
         if page > page_ceil:
-            logger.warning("ucdp: hit page ceiling (%s), stopping", page_ceil)
+            logger.warning("ucdp: hit page ceiling (%s) for %s, stopping", page_ceil, version)
             break
+    return events
+
+
+def _fetch_events(client: httpx.Client) -> list[dict]:
+    """Fetch the curated GED version plus any configured monthly candidate
+    releases. Candidates carry event-level recency past the curated cutoff
+    (e.g. 26.1 ends 2025-12; candidates 26.0.x cover 2026 months). Cross-
+    version duplicates collapse downstream via the ucdp:{id} external_id."""
+    headers = {"x-ucdp-access-token": settings.ucdp_token}
+    cutoff = _cutoff_date(settings.ucdp_lookback_days)
+    cutoff_str = cutoff.date().isoformat()
+
+    versions = [settings.ucdp_ged_version] + [
+        v.strip() for v in settings.ucdp_candidate_versions.split(",") if v.strip()
+    ]
+    all_events: list[dict] = []
+    for version in versions:
+        batch = _fetch_version(client, headers, version, cutoff_str)
+        logger.info("ucdp: version %s → %d events", version, len(batch))
+        all_events.extend(batch)
     return all_events
 
 

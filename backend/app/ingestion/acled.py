@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.ingestion import wikipedia
-from app.ingestion.acled_auth import get_token
+from app.ingestion.acled_auth import get_fresh_token, get_token
 from app.ingestion.base import IngestionSource
 from app.ingestion.countries import country_iso3 as _country_iso3
 from app.models import (
@@ -81,6 +81,35 @@ def _parse_coord(val: object) -> float | None:
         return None
 
 
+def _latest_available_event_date(client: httpx.Client, access_token: str):
+    """ACLED access tiers embargo recent data (~12 months for this account).
+    Scan back in 30-day windows to find the freshest one that returns rows,
+    so the lookback anchors to *available* data — anchoring to wall-clock
+    today would fetch nothing."""
+    today = datetime.now(UTC).date()
+    headers = {"Authorization": f"Bearer {access_token}"}
+    for back in range(24):
+        end = today - timedelta(days=30 * back)
+        start = end - timedelta(days=30)
+        resp = client.get(
+            ACLED_READ_URL,
+            params={
+                "event_date": f"{start.isoformat()}|{end.isoformat()}",
+                "event_date_where": "BETWEEN",
+                "limit": 1,
+                "page": 1,
+            },
+            headers=headers,
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        batch = payload.get("data", []) if isinstance(payload, dict) else payload
+        if batch:
+            return end
+    return None
+
+
 def _fetch_events(client: httpx.Client, access_token: str) -> list[dict]:
     lookback_days = settings.acled_lookback_days
     if settings.acled_reference_date:
@@ -88,7 +117,10 @@ def _fetch_events(client: httpx.Client, access_token: str) -> list[dict]:
 
         end = _date.fromisoformat(settings.acled_reference_date)
     else:
-        end = datetime.now(UTC).date()
+        end = _latest_available_event_date(client, access_token)
+        if end is None:
+            logger.warning("acled-lagged: no available event data found; skipping")
+            return []
     start = end - timedelta(days=lookback_days)
     headers = {"Authorization": f"Bearer {access_token}"}
     out: list[dict] = []
@@ -444,7 +476,14 @@ class ACLEDLaggedEventSource(IngestionSource):
 
         with httpx.Client(timeout=60.0) as client:
             tok = get_token(client)
-            events = _fetch_events(client, tok.access_token)
+            try:
+                events = _fetch_events(client, tok.access_token)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 401:
+                    raise
+                # Dead cached token chain — force one password grant and retry.
+                tok = get_fresh_token(client)
+                events = _fetch_events(client, tok.access_token)
 
         # Bulk-load lookup maps once — per-event SQL would be prohibitive
         # with ~100k events.

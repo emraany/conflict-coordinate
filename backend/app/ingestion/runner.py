@@ -213,7 +213,9 @@ def _replace_intensity_rows(
 def _find_crisis(db: Session, source_name: str, rec: CrisisRecord) -> Crisis | None:
     """Look up an existing crisis. Prefer (country_iso3, admin1_norm) when
     both are set — that's the new natural key. Fall back to legacy
-    (source_name, external_id)."""
+    (source_name, external_id), then to slug: slugs are unique and derived
+    from display names, so they survive `_normalize_admin1` changes that
+    shift the natural key (the upsert then migrates the row in place)."""
     if rec.country_iso3 and rec.admin1_norm:
         crisis = db.scalar(
             select(Crisis).where(
@@ -223,11 +225,14 @@ def _find_crisis(db: Session, source_name: str, rec: CrisisRecord) -> Crisis | N
         )
         if crisis is not None:
             return crisis
-    return db.scalar(
+    crisis = db.scalar(
         select(Crisis).where(
             Crisis.source_name == source_name, Crisis.external_id == rec.external_id
         )
     )
+    if crisis is not None:
+        return crisis
+    return db.scalar(select(Crisis).where(Crisis.slug == rec.slug))
 
 
 def _upsert_crisis(
@@ -264,6 +269,7 @@ def _upsert_crisis(
         # ACLED aggregated owns admin1; lagged source owns event-derived
         # centroid. Last writer wins for the rest.
         crisis.slug = rec.slug
+        crisis.external_id = rec.external_id
         crisis.name = rec.name
         crisis.country = rec.country
         if rec.country_iso3:

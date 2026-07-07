@@ -123,3 +123,12 @@ def get_token(client: httpx.Client) -> CachedToken:
     tok = _password_grant(client, now)
     _save_cached_token(tok)
     return tok
+
+
+def get_fresh_token(client: httpx.Client) -> CachedToken:
+    """Force a password grant, bypassing the cache. Use after a 401 —
+    ACLED can revoke a token chain server-side while the cached
+    timestamps still look valid."""
+    tok = _password_grant(client, datetime.now(UTC))
+    _save_cached_token(tok)
+    return tok
