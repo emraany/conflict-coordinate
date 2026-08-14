@@ -215,7 +215,31 @@ def _resolve_via_pip(
     return str(row[0]) if row else None
 
 
-def _upsert_source(db: Session, crisis_id: int, url: str) -> Source:
+def _title_from_url(url: str) -> str:
+    """Readable title from the article URL slug — GDELT exports carry no
+    headline, so the slug is the best human-readable label available."""
+    from urllib.parse import urlparse
+
+    path = urlparse(url).path.rstrip("/")
+    slug = path.rsplit("/", 1)[-1]
+    slug = re.sub(r"\.(html?|php|aspx?)$", "", slug, flags=re.IGNORECASE)
+    words = re.sub(r"[-_+]+", " ", slug).strip()
+    # Drop pure-id slugs (numbers/hex) — fall back to the domain.
+    if len(re.sub(r"[0-9\s]", "", words)) < 8:
+        return _domain_of(url) or "GDELT-cited article"
+    return words[:460]
+
+
+def _domain_of(url: str) -> str | None:
+    from urllib.parse import urlparse
+
+    netloc = urlparse(url).netloc
+    return netloc.removeprefix("www.") or None
+
+
+def _upsert_source(
+    db: Session, crisis_id: int, url: str, published_at: datetime | None
+) -> Source:
     existing = db.scalar(
         select(Source).where(
             Source.crisis_id == crisis_id,
@@ -224,12 +248,15 @@ def _upsert_source(db: Session, crisis_id: int, url: str) -> Source:
         )
     )
     if existing is not None:
+        if existing.published_at is None and published_at is not None:
+            existing.published_at = published_at
         return existing
     src = Source(
         crisis_id=crisis_id,
-        title=f"GDELT-cited article: {url[:120]}",
+        title=_title_from_url(url),
         url=url,
-        publisher="GDELT",
+        publisher=_domain_of(url),
+        published_at=published_at,
         retrieved_at=datetime.now(UTC),
         source_type=SourceType.news,
         origin="gdelt",
@@ -326,17 +353,19 @@ class GDELTSource(IngestionSource):
                     skipped += 1
                     continue
 
-                source_url = (ev.get("SOURCEURL") or "").strip()
-                source_row = None
-                if source_url:
-                    source_row = _upsert_source(db, crisis_id, source_url)
-
                 try:
                     occurred = datetime.strptime(
                         ev["SQLDATE"], "%Y%m%d"
                     ).replace(tzinfo=UTC)
                 except ValueError:
                     occurred = datetime.now(UTC)
+
+                source_url = (ev.get("SOURCEURL") or "").strip()
+                source_row = None
+                if source_url:
+                    source_row = _upsert_source(
+                        db, crisis_id, source_url, published_at=occurred
+                    )
 
                 conflict_id = None
                 if routing_idx is not None:

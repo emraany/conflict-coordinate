@@ -186,8 +186,12 @@ def _top_admin1s_for(db: Session, conflict_id: int, limit: int = 8) -> list[TopA
     ]
 
 
-def _sources_for(db: Session, conflict_id: int, limit: int = 200) -> list[Source]:
-    """Distinct sources referenced by events routed to this conflict."""
+def _sources_for(
+    db: Session, conflict_id: int, cited_ids: set[int], limit: int = 50
+) -> list[Source]:
+    """Sources for the dossier SOURCES section: newest-first by published
+    date, deduped by URL, capped — but sources cited by the returned
+    timeline events are always kept so "cited in src §NN" refs resolve."""
     source_ids_subq = (
         select(CrisisEvent.source_id)
         .where(
@@ -197,14 +201,22 @@ def _sources_for(db: Session, conflict_id: int, limit: int = 200) -> list[Source
         .distinct()
         .subquery()
     )
-    return list(
-        db.scalars(
-            select(Source)
-            .where(Source.id.in_(select(source_ids_subq)))
-            .order_by(Source.published_at.desc().nullslast(), Source.id.desc())
-            .limit(limit)
-        )
-    )
+    rows = db.scalars(
+        select(Source)
+        .where(Source.id.in_(select(source_ids_subq)))
+        .order_by(Source.published_at.desc().nullslast(), Source.id.desc())
+    ).all()
+    out: list[Source] = []
+    seen_urls: set[str] = set()
+    kept = 0
+    for s in rows:
+        cited = s.id in cited_ids
+        if cited or (s.url not in seen_urls and kept < limit):
+            out.append(s)
+            seen_urls.add(s.url)
+            if not cited:
+                kept += 1
+    return out
 
 
 # --- endpoints --------------------------------------------------------------
@@ -305,7 +317,11 @@ def get_conflict(slug: str, db: Session = Depends(get_db)) -> ConflictDetail:
         )
         for link in conflict.party_links
     ]
-    sources = [SourceOut.model_validate(s) for s in _sources_for(db, conflict.id)]
+    cited_ids = {e.source_id for e in recent_events if e.source_id is not None}
+    sources = [
+        SourceOut.model_validate(s)
+        for s in _sources_for(db, conflict.id, cited_ids)
+    ]
     events_out = [CrisisEventOut.model_validate(e) for e in recent_events]
 
     return ConflictDetail(

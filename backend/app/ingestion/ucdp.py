@@ -196,8 +196,29 @@ def _resolve_admin1_via_pip(
     return str(row[0]) if row else None
 
 
+def _parse_source_date(raw: str | None) -> datetime | None:
+    """GED `source_date` — semicolon-joined when multiple articles back one
+    event; take the first parseable piece."""
+    if not raw:
+        return None
+    for piece in raw.split(";"):
+        piece = piece.strip()
+        if not piece:
+            continue
+        try:
+            return datetime.fromisoformat(piece[:10]).replace(tzinfo=UTC)
+        except ValueError:
+            continue
+    return None
+
+
 def _upsert_source(
-    db: Session, crisis_id: int, url: str, headline: str | None
+    db: Session,
+    crisis_id: int,
+    url: str,
+    headline: str | None,
+    published_at: datetime | None = None,
+    publisher: str | None = None,
 ) -> Source:
     existing = db.scalar(
         select(Source).where(
@@ -207,13 +228,18 @@ def _upsert_source(
         )
     )
     if existing is not None:
+        if existing.published_at is None and published_at is not None:
+            existing.published_at = published_at
+        if not existing.publisher and publisher:
+            existing.publisher = publisher
         return existing
     title = (headline or "UCDP source article")[:460]
     src = Source(
         crisis_id=crisis_id,
         title=title,
         url=url[:1000],
-        publisher=None,
+        publisher=publisher,
+        published_at=published_at,
         retrieved_at=datetime.now(UTC),
         source_type=SourceType.news,
         origin="ucdp",
@@ -338,7 +364,15 @@ class UCDPSource(IngestionSource):
             source_url = (ev.get("source_article") or "").strip()
             source_row = None
             if source_url:
-                source_row = _upsert_source(db, crisis_id, source_url, headline)
+                office = (ev.get("source_office") or "").split(";")[0].strip() or None
+                source_row = _upsert_source(
+                    db,
+                    crisis_id,
+                    source_url,
+                    headline,
+                    published_at=_parse_source_date(ev.get("source_date")),
+                    publisher=office,
+                )
 
             conflict_id = None
             if routing_idx is not None:
