@@ -3,6 +3,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.crisis import ActorRole, CrisisStatus
+from app.schemas.activity import ActivityType
 from app.schemas.actor import ActorOut
 from app.schemas.event import CrisisEventOut
 from app.schemas.source import SourceOut
@@ -170,6 +171,8 @@ class CrisisDetail(CrisisBase):
     violence_4w_fatalities: int = 0
     violence_4w_pop_exposure: int | None = None
     latest_agg_week: date | None = None
+    # What kind of violence was recorded, most frequent first.
+    activity: list[ActivityType] = Field(default_factory=list)
     # Current narrative (ReliefWeb) and named-conflict context.
     field_reports: list[SourceOut] = Field(default_factory=list)
     conflict_context: ConflictContext | None = None

@@ -4,7 +4,23 @@
  * same document rather than drifting apart.
  */
 import { colors, fonts, space } from "../../styles/tokens";
-import type { IntensityWeek } from "../../types";
+import type { ActivityType, IntensityWeek } from "../../types";
+
+/**
+ * What a place is going through, in ACLED's own event categories — never a
+ * characterisation of our own. A category is named only if it accounts for
+ * at least a tenth of recorded activity, so one stray incident can't end up
+ * describing a whole region.
+ */
+export function activitySummary(activity: ActivityType[]): string | null {
+  if (activity.length === 0) return null;
+  const total = activity.reduce((sum, a) => sum + a.events, 0) || 1;
+  return activity
+    .filter((a, i) => i === 0 || a.events / total >= 0.1)
+    .slice(0, 3)
+    .map((a) => a.type)
+    .join(" · ");
+}
 
 export function formatYmd(iso: string | null): string {
   if (!iso) return "—";

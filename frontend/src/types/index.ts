@@ -162,6 +162,8 @@ export interface CrisisDetail {
   violence_4w_fatalities: number;
   violence_4w_pop_exposure: number | null;
   latest_agg_week: string | null;
+  /** What kind of violence was recorded, most frequent first. */
+  activity: ActivityType[];
   field_reports: Source[];
   conflict_context: ConflictContext | null;
 }

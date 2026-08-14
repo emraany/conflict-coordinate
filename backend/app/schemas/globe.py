@@ -2,24 +2,16 @@ from datetime import date
 
 from pydantic import BaseModel
 
+from app.schemas.activity import ActivityType
+
+__all__ = ["ActivityType", "ConflictLabel", "GlobeDot"]
+
 
 class ConflictLabel(BaseModel):
     """The named conflict a region belongs to, when the registry claims it."""
 
     slug: str
     name: str
-
-
-class ActivityType(BaseModel):
-    """One ACLED event category recorded in the region during the window.
-
-    Categories are ACLED's own labels, used verbatim — the dot says what the
-    source recorded, never a characterisation of our own.
-    """
-
-    type: str
-    events: int
-    fatalities: int
 
 
 class GlobeDot(BaseModel):

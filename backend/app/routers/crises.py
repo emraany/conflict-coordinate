@@ -10,6 +10,7 @@ from app.conflicts.routing import route_event
 from app.db import get_db
 from app.deps import require_admin_token
 from app.dossier import (
+    activity_for_crises,
     dedupe_events_for_display,
     field_reports_for_country,
     gdelt_7d_reports,
@@ -230,8 +231,10 @@ def _load_crisis_detail(db: Session, crisis: Crisis) -> CrisisDetail:
                     "intensity_52w",
                     "field_reports",
                     "conflict_context",
+                    "activity",
                 }
             },
+            "activity": activity_for_crises(db, [crisis.id]).get(crisis.id, []),
             "actors": actor_links,
             "sources": sources,
             "events": events_out,

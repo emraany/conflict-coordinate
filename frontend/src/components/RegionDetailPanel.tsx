@@ -13,6 +13,7 @@ import {
   SectionHeader,
   StatTile,
   SubHeader,
+  activitySummary,
   formatYmd,
 } from "./dossier";
 
@@ -146,6 +147,7 @@ export function RegionDetailPanel({ slug, onClose }: Props) {
         }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>
+          {/* What is happening leads; where it is happening follows. */}
           <div
             style={{
               fontFamily: fonts.stamp,
@@ -155,8 +157,25 @@ export function RegionDetailPanel({ slug, onClose }: Props) {
               lineHeight: 1.15,
             }}
           >
-            {detail?.name ?? (loading ? "LOADING…" : slug)}
+            {detail
+              ? (activitySummary(detail.activity) ?? "Recorded violence")
+              : loading
+                ? "LOADING…"
+                : slug}
           </div>
+          {detail && (
+            <div
+              style={{
+                fontFamily: fonts.mono,
+                fontSize: 14,
+                color: colors.textMuted,
+                letterSpacing: "0.06em",
+                marginTop: 3,
+              }}
+            >
+              {detail.name}
+            </div>
+          )}
           {detail && (
             <div
               style={{
@@ -196,11 +215,14 @@ export function RegionDetailPanel({ slug, onClose }: Props) {
                   NO NAMED CONFLICT
                 </span>
               )}
-              <span>{detail.country_iso3 ?? detail.country ?? ""}</span>
-              <span style={{ color: colors.textDim }}>·</span>
               <span>
-                activity through week of {detail.latest_agg_week ?? "—"}
+                {detail.violence_4w_events.toLocaleString()} events
+                {detail.violence_4w_fatalities > 0
+                  ? ` · † ${detail.violence_4w_fatalities.toLocaleString()} killed`
+                  : " · no deaths reported"}
               </span>
+              <span style={{ color: colors.textDim }}>·</span>
+              <span>4 weeks to {detail.latest_agg_week ?? "—"}</span>
             </div>
           )}
         </div>

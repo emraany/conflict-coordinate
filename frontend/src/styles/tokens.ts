@@ -21,6 +21,23 @@ export const colors = {
   inkShadow: "rgba(0, 0, 0, 0.55)",
 } as const;
 
+/**
+ * Severity ramp for globe markers, low to high reported deaths.
+ *
+ * Deliberately louder and more saturated than the document chrome: markers
+ * sit on a photographic Earth, and the muted olive that reads well on
+ * gunmetal paper disappears against ocean and landmass. Marker colour is
+ * the one place the palette is allowed to shout — everything framing it
+ * stays quiet.
+ */
+export const dotRamp = [
+  "#f2d492", // straw — activity, no deaths reported
+  "#f5a742", // amber
+  "#ef7326", // orange
+  "#e8432a", // vermilion
+  "#ff1f1f", // signal red — heaviest loss of life
+] as const;
+
 export const fonts = {
   mono: `"IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace`,
   stamp: `"Special Elite", "IBM Plex Mono", monospace`,

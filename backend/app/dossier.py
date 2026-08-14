@@ -13,11 +13,51 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
+from app.ingestion.runner import DOT_WINDOW_WEEKS, VIOLENT_EVENT_TYPES
 from app.models import Source
 from app.models.event import CrisisEvent
+from app.schemas.activity import ActivityType
+
+
+def activity_for_crises(
+    db: Session, crisis_ids: list[int]
+) -> dict[int, list[ActivityType]]:
+    """What kind of violence each region saw in the current window, most
+    frequent first — so a dot or dossier can state what is happening there
+    rather than only where it is. Categories are ACLED's own labels.
+    """
+    if not crisis_ids:
+        return {}
+    types_sql = ", ".join(f"'{t}'" for t in VIOLENT_EVENT_TYPES)
+    rows = db.execute(
+        text(
+            f"""
+            WITH latest AS (
+                SELECT max(week_start) AS w FROM crisis_intensity_weekly
+            )
+            SELECT w.crisis_id, w.event_type,
+                   sum(w.event_count) AS ev, sum(w.fatalities) AS fat
+            FROM crisis_intensity_weekly w, latest
+            WHERE w.crisis_id = ANY(:ids)
+              AND w.week_start > latest.w - make_interval(weeks => :weeks)
+              AND w.event_type IN ({types_sql})
+            GROUP BY w.crisis_id, w.event_type
+            ORDER BY w.crisis_id, sum(w.event_count) DESC
+            """
+        ),
+        {"ids": crisis_ids, "weeks": DOT_WINDOW_WEEKS},
+    ).all()
+    out: dict[int, list[ActivityType]] = {}
+    for r in rows:
+        out.setdefault(r.crisis_id, []).append(
+            ActivityType(
+                type=r.event_type, events=int(r.ev or 0), fatalities=int(r.fat or 0)
+            )
+        )
+    return out
 
 
 def dedupe_events_for_display(
