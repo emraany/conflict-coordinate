@@ -43,6 +43,22 @@ function formatWeek(iso: string | null): string {
   return iso.slice(0, 10);
 }
 
+/**
+ * What a dot is about, in ACLED's own event categories — the dominant kinds
+ * of violence recorded there. A category is only named if it accounts for at
+ * least a tenth of the activity, so a single stray incident doesn't end up
+ * describing the region.
+ */
+function activitySummary(d: GlobeDot): string {
+  if (d.activity.length === 0) return "Recorded violence";
+  const total = d.activity.reduce((sum, a) => sum + a.events, 0) || 1;
+  const named = d.activity
+    .filter((a, i) => i === 0 || a.events / total >= 0.1)
+    .slice(0, 2)
+    .map((a) => a.type);
+  return named.join(" · ");
+}
+
 function lerpHex(from: [number, number, number], to: [number, number, number], t: number): string {
   const r = Math.round(from[0] + (to[0] - from[0]) * t);
   const g = Math.round(from[1] + (to[1] - from[1]) * t);
@@ -230,15 +246,6 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
     [showBorders, countriesGeo],
   );
 
-  // Regions significant enough to carry a standing label on the globe.
-  const labelled: PointDatum[] = useMemo(() => {
-    const ranked = [...points].sort(
-      (a, b) =>
-        b.fatalities_4w - a.fatalities_4w || b.events_4w - a.events_4w,
-    );
-    return ranked.slice(0, 45);
-  }, [points]);
-
   // Pulse only the most lethal regions — every dot is current, so a ring on
   // each would be noise rather than signal.
   const rings: RingDatum[] = useMemo(() => {
@@ -394,8 +401,9 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
             font-size: 11px;
             letter-spacing: 0.08em;
           ">
-            <div style="font-size:13px;">${p.name}</div>
-            <div style="color:${colors.textMuted};font-size:10px;margin-top:3px;">${p.events_4w} events${p.fatalities_4w > 0 ? ` · † ${p.fatalities_4w}` : ""} · 4 wks to ${formatWeek(p.latest_week)}</div>
+            <div style="font-size:13px;color:${p.__color};">${activitySummary(p)}</div>
+            <div style="font-size:11px;margin-top:2px;">${p.name}</div>
+            <div style="color:${colors.textMuted};font-size:10px;margin-top:3px;">${p.events_4w.toLocaleString()} events${p.fatalities_4w > 0 ? ` · † ${p.fatalities_4w.toLocaleString()} killed` : " · no deaths reported"} · 4 wks to ${formatWeek(p.latest_week)}</div>
             ${
               p.conflict
                 ? `<div style="color:${colors.oliveLight};font-size:10px;margin-top:3px;">part of ${p.conflict.name}</div>`
@@ -404,20 +412,6 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
           </div>`;
         }}
         onPointClick={(p) => onSelect((p as PointDatum).slug)}
-        // Standing labels for the most significant regions, so the globe is
-        // readable without hovering every dot. Labelling all 350 would be a
-        // wall of text, so only the top slice by activity gets one.
-        labelsData={viewMode === "dots" ? labelled : []}
-        labelLat={(d: object) => (d as PointDatum).lat}
-        labelLng={(d: object) => (d as PointDatum).lng}
-        labelText={(d: object) => (d as PointDatum).admin1 ?? (d as PointDatum).name}
-        labelColor={() => colors.text}
-        labelSize={0.42}
-        labelDotRadius={0}
-        labelResolution={2}
-        labelAltitude={0.012}
-        labelIncludeDot={false}
-        onLabelClick={(d: object) => onSelect((d as PointDatum).slug)}
         ringsData={viewMode === "dots" ? rings : []}
         ringLat={(d) => (d as RingDatum).lat}
         ringLng={(d) => (d as RingDatum).lng}

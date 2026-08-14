@@ -10,6 +10,18 @@ class ConflictLabel(BaseModel):
     name: str
 
 
+class ActivityType(BaseModel):
+    """One ACLED event category recorded in the region during the window.
+
+    Categories are ACLED's own labels, used verbatim — the dot says what the
+    source recorded, never a characterisation of our own.
+    """
+
+    type: str
+    events: int
+    fatalities: int
+
+
 class GlobeDot(BaseModel):
     """One admin1 region with current violent activity.
 
@@ -29,3 +41,5 @@ class GlobeDot(BaseModel):
     population_exposure: int | None
     latest_week: date | None
     conflict: ConflictLabel | None
+    # What kind of violence was recorded, most frequent first.
+    activity: list[ActivityType]

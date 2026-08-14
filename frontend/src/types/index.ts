@@ -66,6 +66,13 @@ export interface ConflictLabel {
   name: string;
 }
 
+/** An ACLED event category recorded in a region, using ACLED's own label. */
+export interface ActivityType {
+  type: string;
+  events: number;
+  fatalities: number;
+}
+
 /**
  * One admin1 region with current violent activity — the globe's dot layer.
  * Counts are a trailing-4-week rollup of ACLED weekly aggregates ending at
@@ -84,6 +91,8 @@ export interface GlobeDot {
   population_exposure: number | null;
   latest_week: string | null;
   conflict: ConflictLabel | null;
+  /** What kind of violence was recorded, most frequent first. */
+  activity: ActivityType[];
 }
 
 export interface CrisisListItem {
