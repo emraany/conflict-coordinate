@@ -204,7 +204,7 @@ export function AboutPage() {
                 name="ACLED"
                 role="[ PRIMARY ]"
                 url="https://acleddata.com"
-                note="Armed Conflict Location & Event Data. Individual geo-coded events: fatalities, sub-event types, actors, location. Forms the backbone of the crisis dataset via DBSCAN geographic clustering."
+                note="Armed Conflict Location & Event Data. Two distinct feeds: weekly admin1 aggregates (no embargo, ~1–2 weeks behind) supply the globe's dots and every current count; individual geo-coded event records, embargoed ~12 months on the Research tier, supply the incident archive. Data © ACLED, used under academic access and cited on every figure derived from it."
               />
               <SourceRow
                 name="GDELT"
@@ -216,7 +216,13 @@ export function AboutPage() {
                 name="ReliefWeb"
                 role="[ CONTEXT ]"
                 url="https://reliefweb.int"
-                note="OCHA field situation reports. Provides SITREP excerpts in dossier FIELD REPORTS section. Credential pending."
+                note="OCHA field situation reports, stored per country. The only current narrative layer in the app — the incident archive lags, these do not."
+              />
+              <SourceRow
+                name="UCDP"
+                role="[ SUPPLEMENTARY ]"
+                url="https://ucdp.uu.se"
+                note="Uppsala Conflict Data Program, Georeferenced Event Dataset. Attach-only: events are matched to existing regions and never create their own. Publishes a month or two behind."
               />
               <SourceRow
                 name="Wikipedia"
@@ -241,10 +247,13 @@ export function AboutPage() {
 
           <Section num="04" title="INGESTION PIPELINE">
             <p style={{ margin: 0, marginBottom: space.sm }}>
-              Ingestion is manually triggered via the admin endpoint. There is
-              no automated scheduler — every refresh is an auditable operator
-              action. The pipeline is idempotent: re-running the same window
-              upserts existing records rather than duplicating them.
+              Ingestion runs on a weekly schedule — the cadence ACLED's
+              aggregates publish at, so nothing here can be fresher than that
+              — and can also be triggered manually via the admin endpoint.
+              Every attempt is recorded, and the footer stamp reports how long
+              it has been since one last succeeded. The pipeline is idempotent:
+              re-running the same window upserts existing records rather than
+              duplicating them.
             </p>
             <ol
               style={{

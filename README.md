@@ -2,7 +2,8 @@
 
 Neutral platform that visualizes active global conflicts on an interactive 3D globe. Every claim is traceable to a cited source.
 
-**Status:** early development. Fixture data only.
+**Status:** active. Live ACLED, UCDP, GDELT and ReliefWeb ingestion on a weekly
+schedule; ~350 admin1 regions currently render on the globe.
 
 ## Stack
 
@@ -46,8 +47,23 @@ See [`CLAUDE.md`](./CLAUDE.md) for conventions, neutrality rules, and design tok
 
 ## Data sources
 
-- `backend/app/seed_data.json` — curated fixture data, **dev-only**, flagged as non-authoritative.
-- ACLED adapter — stub only. Wiring requires ACLED API credentials.
+- **ACLED** — weekly admin1 aggregates drive the globe's dots and all current
+  counts; individual event records (embargoed ~12 months on the Research tier)
+  form the incident archive. Requires ACLED credentials.
+- **UCDP** — Georeferenced Event Dataset, attach-only. Requires a token.
+- **GDELT** — news-event stream attached by proximity; a freshness signal, not
+  verified incident records.
+- **ReliefWeb** — OCHA situation reports, stored per country. Requires a
+  registered appname.
+- `backend/app/seed_data.json` — curated fixture data, **dev-only**, flagged as
+  non-authoritative.
+
+All feeds are off by default; fixture data works standalone. See `.env.example`.
+
+## Deployment
+
+See [`DEPLOY.md`](./DEPLOY.md) — Railway (API + weekly cron ingest + PostGIS)
+and Vercel (frontend).
 
 ## License
 

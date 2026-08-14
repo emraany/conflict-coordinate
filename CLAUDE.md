@@ -97,22 +97,28 @@ All flags default to `false`/empty — fixture data works standalone.
 | `ACLED_LOOKBACK_DAYS` | `90` | How far back to fetch events |
 | `ACLED_CRISIS_EVENT_THRESHOLD` | `10` | Min events to create a country-year crisis |
 | `GDELT_ENABLED` | `false` | Enable GDELT supplementary stream |
-| `GDELT_ATTACH_RADIUS_KM` | `300` | Max distance to attach event to crisis |
 | `GDELT_LOOKBACK_MINUTES` | `180` | How many minutes of GDELT exports to fetch |
 | `UCDP_ENABLED` | `false` | Enable UCDP GED ingestion (attach-only) |
 | `UCDP_TOKEN` | `""` | UCDP API token (x-ucdp-access-token header) |
 | `UCDP_LOOKBACK_DAYS` | `730` | How far back to query events (2 years default) |
-| `UCDP_GED_VERSION` | `25.1` | UCDP GED dataset version string |
-| `UCDP_ATTACH_RADIUS_KM` | `150` | Max distance to attach a UCDP event to a crisis |
+| `UCDP_GED_VERSION` | `26.1` | UCDP GED dataset version string |
+| `UCDP_CANDIDATE_VERSIONS` | `""` | Comma-separated monthly GED candidate releases |
 | `STATUS_STALE_DAYS` | `90` | Active crises with no event in this many days are demoted to `frozen` (0 disables) |
+| `CONFLICT_AUTO_PROMOTION_EVENTS_4W` | `10` | Emerging conflicts auto-promote to `active` at this 4-week event count (0 disables) |
+| `CONFLICT_STALE_DAYS` | `60` | Active conflicts with no event in this many days are demoted to `frozen` (0 disables) |
+| `PRODUCTION` | `false` | Set true when deployed. Refuses to start if `ADMIN_TOKEN` is still the default |
 | `INGEST_SCHEDULE_TIME` | `""` | Optional in-server daily ingest at HH:MM UTC. Off by default — schedule the standalone worker instead (below) |
 
 Scheduled ingestion runs as a standalone worker, decoupled from the API server:
 
 ```bash
-# crontab example — daily at 03:00 UTC
-0 3 * * * cd /path/to/Conflict/backend && uv run python -m app.ingestion.runner >> ~/.conflict-ingest.log 2>&1
+# crontab example — weekly, Tuesdays 06:00 UTC (after ACLED's weekly publish)
+0 6 * * 2 cd /path/to/Conflict/backend && uv run python -m app.ingestion.runner >> ~/.conflict-ingest.log 2>&1
 ```
+
+In production this is a Railway cron service running the same image as the
+API — see `DEPLOY.md`. Every attempt writes an `ingest_runs` row; `/api/health`
+reports how long it has been since one last succeeded.
 
 ACLED OAuth tokens cached at `backend/.cache/acled_token.json` (gitignored).
 
@@ -125,7 +131,6 @@ ACLED OAuth tokens cached at `backend/.cache/acled_token.json` (gitignored).
 
 ## Current status pointers
 
-- Active plan (tasks 1–17): `/Users/emraan/.claude/plans/modular-floating-perlis.md`
-- ML phase detail: `/Users/emraan/.claude/plans/inherited-watching-lighthouse.md`
-- Deployment plan: `/Users/emraan/.claude/plans/fluffy-singing-clover.md`
+- Deployment runbook: `DEPLOY.md` (Railway + Vercel, weekly cron ingest)
+- Last plan: `/Users/emraan/.claude/plans/how-can-we-make-purring-mccarthy.md`
 - Memory index: `/Users/emraan/.claude/projects/-Users-emraan-Desktop-Conflict/memory/MEMORY.md`
