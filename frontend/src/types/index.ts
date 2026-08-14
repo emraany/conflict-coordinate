@@ -113,6 +113,8 @@ export interface CrisisStats {
   recent_4w_events: number;
   recent_4w_fatalities: number;
   recent_population_exposed: number | null;
+  /** Machine-coded GDELT reports in the last 7 days — a freshness signal. */
+  gdelt_7d_reports: number;
 }
 
 export interface IntensityWeek {
@@ -146,6 +148,22 @@ export interface CrisisDetail {
   events: CrisisEvent[];
   stats: CrisisStats;
   intensity_52w: IntensityWeek[];
+  /** Current activity rollup — the figures that size and colour this dot. */
+  violence_4w_events: number;
+  violence_4w_fatalities: number;
+  violence_4w_pop_exposure: number | null;
+  latest_agg_week: string | null;
+  field_reports: Source[];
+  conflict_context: ConflictContext | null;
+}
+
+/** The named conflict claiming a region, when the registry has one. */
+export interface ConflictContext {
+  slug: string;
+  name: string;
+  summary: string | null;
+  conflict_type: string | null;
+  parties: ActorLink[];
 }
 
 export interface IngestSummary {

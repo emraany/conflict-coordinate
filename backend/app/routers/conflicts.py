@@ -20,6 +20,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.db import get_db
+from app.dossier import (
+    dedupe_events_for_display,
+    field_reports_for_country,
+    gdelt_7d_reports,
+    sources_for,
+)
 from app.models import (
     Conflict,
     ConflictParty,
@@ -158,74 +164,6 @@ def _compute_stats(
     )
 
 
-def _dedupe_events_for_display(
-    events: list[CrisisEvent], limit: int = 50
-) -> list[tuple[CrisisEvent, int]]:
-    """Presentation-only dedup of the dossier timeline — DB rows are never
-    merged and stats still count every record. Two collapse rules:
-
-      - identical (day, description) rows fold into one, counted
-      - same-day rows within ~0.1° from *different* feeds fold into the row
-        with the richest description (ACLED prose beats a UCDP headline);
-        same-feed rows at the same spot stay separate — they are distinct
-        incidents, not double reporting
-
-    Returns (event, report_count) newest-first, capped at `limit`."""
-
-    def _day(ev: CrisisEvent):
-        return ev.occurred_at.date()
-
-    def _feed(ev: CrisisEvent) -> str:
-        return (ev.external_id or "").split(":", 1)[0]
-
-    # Rank richer rows first within each day so a bucket keeps its best row.
-    ranked = sorted(
-        events, key=lambda e: (_day(e), len(e.description or "")), reverse=True
-    )
-    kept: list[list] = []  # [event, count]
-    by_desc: dict[tuple, int] = {}
-    by_loc: dict[tuple, list[int]] = {}
-    for ev in ranked:
-        desc_key = (_day(ev), (ev.description or "").strip())
-        target = by_desc.get(desc_key)
-        loc_key = None
-        if target is None and ev.lat is not None and ev.lng is not None:
-            loc_key = (_day(ev), round(ev.lat, 1), round(ev.lng, 1))
-            for idx in by_loc.get(loc_key, []):
-                if _feed(kept[idx][0]) != _feed(ev):
-                    target = idx
-                    break
-        if target is not None:
-            kept[target][1] += 1
-            continue
-        kept.append([ev, 1])
-        idx = len(kept) - 1
-        by_desc[desc_key] = idx
-        if ev.lat is not None and ev.lng is not None:
-            loc_key = loc_key or (_day(ev), round(ev.lat, 1), round(ev.lng, 1))
-            by_loc.setdefault(loc_key, []).append(idx)
-    kept.sort(key=lambda t: t[0].occurred_at, reverse=True)
-    return [(ev, count) for ev, count in kept[:limit]]
-
-
-def _gdelt_7d_reports(db: Session, conflict_id: int) -> int:
-    """Routed GDELT records in the last 7 days — the freshness signal shown
-    in GLANCE (GDELT rows are excluded from the prose timeline)."""
-    from datetime import UTC, datetime, timedelta
-
-    cutoff = datetime.now(UTC) - timedelta(days=7)
-    return int(
-        db.scalar(
-            select(func.count()).where(
-                CrisisEvent.conflict_id == conflict_id,
-                CrisisEvent.external_id.like("gdelt:%"),
-                CrisisEvent.occurred_at >= cutoff,
-            )
-        )
-        or 0
-    )
-
-
 def _top_admin1s_for(db: Session, conflict_id: int, limit: int = 8) -> list[TopAdmin1]:
     """Top admin1 cells in this conflict, ranked by event count.
 
@@ -252,39 +190,6 @@ def _top_admin1s_for(db: Session, conflict_id: int, limit: int = 8) -> list[TopA
         )
         for r in rows
     ]
-
-
-def _sources_for(
-    db: Session, conflict_id: int, cited_ids: set[int], limit: int = 50
-) -> list[Source]:
-    """Sources for the dossier SOURCES section: newest-first by published
-    date, deduped by URL, capped — but sources cited by the returned
-    timeline events are always kept so "cited in src §NN" refs resolve."""
-    source_ids_subq = (
-        select(CrisisEvent.source_id)
-        .where(
-            CrisisEvent.conflict_id == conflict_id,
-            CrisisEvent.source_id.is_not(None),
-        )
-        .distinct()
-        .subquery()
-    )
-    rows = db.scalars(
-        select(Source)
-        .where(Source.id.in_(select(source_ids_subq)))
-        .order_by(Source.published_at.desc().nullslast(), Source.id.desc())
-    ).all()
-    out: list[Source] = []
-    seen_urls: set[str] = set()
-    kept = 0
-    for s in rows:
-        cited = s.id in cited_ids
-        if cited or (s.url not in seen_urls and kept < limit):
-            out.append(s)
-            seen_urls.add(s.url)
-            if not cited:
-                kept += 1
-    return out
 
 
 # --- endpoints --------------------------------------------------------------
@@ -360,7 +265,7 @@ def get_conflict(slug: str, db: Session = Depends(get_db)) -> ConflictDetail:
             .limit(150)
         )
     )
-    deduped = _dedupe_events_for_display(timeline_rows)
+    deduped = dedupe_events_for_display(timeline_rows)
     recent_events = [ev for ev, _count in deduped]
 
     # Stats: total counts come from the conflict-scoped query, NOT just the
@@ -383,7 +288,9 @@ def get_conflict(slug: str, db: Session = Depends(get_db)) -> ConflictDetail:
     stats.total_fatalities = counts[1]
     stats.first_event_at = bounds.first_at
     stats.last_event_at = bounds.last_at
-    stats.gdelt_7d_reports = _gdelt_7d_reports(db, conflict.id)
+    stats.gdelt_7d_reports = gdelt_7d_reports(
+        db, CrisisEvent.conflict_id, conflict.id
+    )
 
     parties = [
         ConflictPartyOut(
@@ -397,19 +304,11 @@ def get_conflict(slug: str, db: Session = Depends(get_db)) -> ConflictDetail:
     cited_ids = {e.source_id for e in recent_events if e.source_id is not None}
     sources = [
         SourceOut.model_validate(s)
-        for s in _sources_for(db, conflict.id, cited_ids)
+        for s in sources_for(db, CrisisEvent.conflict_id, conflict.id, cited_ids)
     ]
     field_reports = [
         SourceOut.model_validate(s)
-        for s in db.scalars(
-            select(Source)
-            .where(
-                Source.conflict_id == conflict.id,
-                Source.origin == "reliefweb",
-            )
-            .order_by(Source.published_at.desc().nullslast())
-            .limit(4)
-        )
+        for s in field_reports_for_country(db, conflict.primary_iso3)
     ]
     events_out = []
     for ev, count in deduped:

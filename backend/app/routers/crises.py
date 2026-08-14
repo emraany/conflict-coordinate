@@ -6,9 +6,18 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.conflicts.routing import route_event
 from app.db import get_db
 from app.deps import require_admin_token
+from app.dossier import (
+    dedupe_events_for_display,
+    field_reports_for_country,
+    gdelt_7d_reports,
+    sources_for,
+)
 from app.models import (
+    Conflict,
+    ConflictParty,
     Crisis,
     CrisisActor,
     CrisisIntensityWeekly,
@@ -18,6 +27,9 @@ from app.models import (
 )
 from app.models.event import CrisisEvent
 from app.ml.graph import build_graph
+from app.schemas.crisis import ConflictContext
+from app.schemas.event import CrisisEventOut
+from app.scripts.backfill_routing import _load_routing_index
 from app.schemas import (
     ActorLinkCreate,
     ActorLinkOut,
@@ -134,6 +146,38 @@ def _compute_stats(
     )
 
 
+def _conflict_context(db: Session, crisis: Crisis) -> ConflictContext | None:
+    """Resolve the named conflict claiming this region, using the same
+    `route_event` the ingest pipeline uses, so a region's label can never
+    disagree with where its events were routed."""
+    idx = _load_routing_index(db)
+    conflict_id = route_event([], crisis.country_iso3, crisis.admin1_norm, idx)
+    if conflict_id is None:
+        return None
+    conflict = db.scalars(
+        select(Conflict)
+        .where(Conflict.id == conflict_id)
+        .options(selectinload(Conflict.party_links).selectinload(ConflictParty.actor))
+    ).one_or_none()
+    if conflict is None:
+        return None
+    return ConflictContext(
+        slug=conflict.slug,
+        name=conflict.name,
+        summary=conflict.summary,
+        conflict_type=conflict.conflict_type,
+        parties=[
+            ActorLinkOut(
+                actor=link.actor,
+                role=link.role,
+                notes=link.notes,
+                source_id=link.source_id,
+            )
+            for link in conflict.party_links
+        ],
+    )
+
+
 def _load_crisis_detail(db: Session, crisis: Crisis) -> CrisisDetail:
     actor_links = [
         ActorLinkOut(
@@ -145,23 +189,56 @@ def _load_crisis_detail(db: Session, crisis: Crisis) -> CrisisDetail:
         for link in crisis.actor_links
     ]
     weeks, r4_events, r4_fatalities, r4_exposed = _load_intensity_52w(db, crisis.id)
+
+    # Timeline: incidents WITH prose only. GDELT rows carry no description —
+    # they feed the 7-day signal instead of padding the archive with blanks.
+    timeline_rows = [
+        e
+        for e in crisis.events
+        if e.description and e.occurred_at is not None
+    ]
+    timeline_rows.sort(key=lambda e: e.occurred_at, reverse=True)
+    deduped = dedupe_events_for_display(timeline_rows[:150])
+    events_out = []
+    for ev, count in deduped:
+        out = CrisisEventOut.model_validate(ev)
+        out.report_count = count
+        events_out.append(out)
+
+    cited_ids = {ev.source_id for ev, _ in deduped if ev.source_id is not None}
+    sources = sources_for(db, CrisisEvent.crisis_id, crisis.id, cited_ids)
+
+    stats = _compute_stats(
+        crisis.events,
+        recent_4w_events=r4_events,
+        recent_4w_fatalities=r4_fatalities,
+        recent_population_exposed=r4_exposed,
+    )
+    stats.gdelt_7d_reports = gdelt_7d_reports(db, CrisisEvent.crisis_id, crisis.id)
+
     return CrisisDetail.model_validate(
         {
             **{
                 k: getattr(crisis, k)
                 for k in CrisisDetail.model_fields
-                if k not in {"actors", "sources", "events", "stats", "intensity_52w"}
+                if k
+                not in {
+                    "actors",
+                    "sources",
+                    "events",
+                    "stats",
+                    "intensity_52w",
+                    "field_reports",
+                    "conflict_context",
+                }
             },
             "actors": actor_links,
-            "sources": crisis.sources,
-            "events": sorted(crisis.events, key=lambda e: e.occurred_at, reverse=True)[:50],
-            "stats": _compute_stats(
-                crisis.events,
-                recent_4w_events=r4_events,
-                recent_4w_fatalities=r4_fatalities,
-                recent_population_exposed=r4_exposed,
-            ),
+            "sources": sources,
+            "events": events_out,
+            "stats": stats,
             "intensity_52w": weeks,
+            "field_reports": field_reports_for_country(db, crisis.country_iso3),
+            "conflict_context": _conflict_context(db, crisis),
         }
     )
 

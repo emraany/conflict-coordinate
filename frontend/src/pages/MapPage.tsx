@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 
 import { api } from "../api/client";
 import { Brief } from "../components/Brief";
-import { CrisisDetailPanel } from "../components/CrisisDetailPanel";
 import { Globe, lethalityColor } from "../components/Globe";
+import { RegionDetailPanel } from "../components/RegionDetailPanel";
 import { colors, fonts, space } from "../styles/tokens";
 import type { GlobeDot } from "../types";
 
@@ -160,7 +160,7 @@ export function MapPage() {
               minHeight: 0,
             }}
           >
-            <CrisisDetailPanel
+            <RegionDetailPanel
               slug={selectedSlug}
               onClose={() => setSelectedSlug(null)}
             />

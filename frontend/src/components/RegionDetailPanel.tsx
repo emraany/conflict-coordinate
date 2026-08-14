@@ -2,15 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, ApiError } from "../api/client";
 import { colors, fonts, space } from "../styles/tokens";
-import type {
-  ActorRole,
-  ConflictDetail,
-  ConflictParty,
-  CrisisEvent,
-  IntensityWeek,
-  TopAdmin1,
-} from "../types";
+import type { ActorRole, CrisisDetail } from "../types";
 import { ActorList } from "./ActorList";
+import { EventTimeline } from "./EventTimeline";
+import { SourceList } from "./SourceList";
 import {
   EventTypeBreakdown,
   FieldReportList,
@@ -18,13 +13,8 @@ import {
   SectionHeader,
   StatTile,
   SubHeader,
-  formatDuration,
-  formatMonth,
   formatYmd,
 } from "./dossier";
-import { EventTimeline } from "./EventTimeline";
-import { SourceList } from "./SourceList";
-import { StatusChip } from "./StatusChip";
 
 interface Props {
   slug: string | null;
@@ -33,112 +23,44 @@ interface Props {
 
 const ROLE_GROUPS: Array<{ role: ActorRole; label: string; subline: string }> = [
   { role: "party", label: "PARTIES", subline: "actively engaged in the conflict" },
-  { role: "mediator", label: "MEDIATORS", subline: "external parties working toward resolution" },
+  {
+    role: "mediator",
+    label: "MEDIATORS",
+    subline: "external parties working toward resolution",
+  },
   { role: "observer", label: "OBSERVERS", subline: "monitoring without taking sides" },
-  { role: "affected", label: "AFFECTED", subline: "civilian populations bearing the brunt" },
+  {
+    role: "affected",
+    label: "AFFECTED",
+    subline: "civilian populations bearing the brunt",
+  },
 ];
 
 const SECTION_NAV: Array<{ id: string; num: string; label: string }> = [
-  { id: "cc-glance", num: "01", label: "GLANCE" },
-  { id: "cc-reports", num: "02", label: "REPORTS" },
-  { id: "cc-who", num: "03", label: "WHO" },
-  { id: "cc-when", num: "04", label: "TIMELINE" },
-  { id: "cc-where", num: "05", label: "WHERE" },
-  { id: "cc-sources", num: "06", label: "SOURCES" },
+  { id: "rr-now", num: "01", label: "NOW" },
+  { id: "rr-reports", num: "02", label: "REPORTS" },
+  { id: "rr-who", num: "03", label: "WHO" },
+  { id: "rr-archive", num: "04", label: "ARCHIVE" },
+  { id: "rr-sources", num: "05", label: "SOURCES" },
 ];
 
-function CountryLine({
-  primary,
-  secondary,
-}: {
-  primary: string | null;
-  secondary: string[];
-}) {
-  if (!primary && secondary.length === 0) return <span>—</span>;
-  return (
-    <>
-      <span style={{ color: colors.text }}>{primary ?? "—"}</span>
-      {secondary.length > 0 && (
-        <>
-          <span style={{ color: colors.textDim }}> · with </span>
-          <span style={{ color: colors.text }}>{secondary.join(", ")}</span>
-        </>
-      )}
-    </>
-  );
-}
-
-function TopAdmin1List({ rows }: { rows: TopAdmin1[] }) {
-  if (rows.length === 0) {
-    return (
-      <div className="label" style={{ color: colors.textDim }}>
-        (no event-level admin1 records yet)
-      </div>
-    );
-  }
-  return (
-    <ol style={{ margin: 0, padding: 0, listStyle: "none" }}>
-      {rows.map((r, i) => (
-        <li
-          key={`${r.iso3}-${r.admin1}`}
-          style={{
-            display: "flex",
-            alignItems: "baseline",
-            gap: space.md,
-            paddingTop: space.xs,
-            paddingBottom: space.xs,
-            borderBottom:
-              i === rows.length - 1
-                ? "none"
-                : `1px dashed ${colors.rule}`,
-          }}
-        >
-          <span
-            style={{
-              fontFamily: fonts.mono,
-              fontSize: 11,
-              color: colors.textDim,
-              minWidth: 28,
-            }}
-          >
-            [{String(i + 1).padStart(2, "0")}]
-          </span>
-          <span
-            style={{
-              flex: 1,
-              fontFamily: fonts.mono,
-              fontSize: 13,
-              color: colors.text,
-            }}
-          >
-            {r.admin1}
-            <span style={{ color: colors.textDim }}> · {r.iso3}</span>
-          </span>
-          <span
-            style={{
-              fontFamily: fonts.mono,
-              fontSize: 11,
-              color: colors.textMuted,
-            }}
-          >
-            {r.event_count} event{r.event_count === 1 ? "" : "s"}
-          </span>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-export function ConflictDetailPanel({ slug, onClose }: Props) {
-  const [detail, setDetail] = useState<ConflictDetail | null>(null);
+/**
+ * The dossier for one globe dot: an admin1 region.
+ *
+ * Two clearly separated layers, because their currency differs by months:
+ * section 01 is ACLED's real-time weekly aggregate (what is happening now),
+ * section 04 is the incident archive (ACLED's event API is embargoed ~12
+ * months; UCDP lands a month or two behind). Labels say so plainly rather
+ * than letting a reader assume the incident list is current.
+ */
+export function RegionDetailPanel({ slug, onClose }: Props) {
+  const [detail, setDetail] = useState<CrisisDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [showAllParties, setShowAllParties] = useState(false);
   const [showAllTimeline, setShowAllTimeline] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setShowAllParties(false);
     setShowAllTimeline(false);
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   }, [slug]);
@@ -149,7 +71,7 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
     setLoading(true);
     setError(null);
     api
-      .getConflict(slug)
+      .getCrisis(slug)
       .then((d) => {
         if (!cancelled) setDetail(d);
       })
@@ -158,7 +80,7 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
         if (e instanceof ApiError) {
           setError(e.status === 404 ? "Not found" : `Error ${e.status}`);
         } else {
-          setError("Error loading conflict");
+          setError("Error loading region");
         }
       })
       .finally(() => {
@@ -177,9 +99,9 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
   }, [detail]);
 
   const partiesByRole = useMemo(() => {
-    const map = new Map<ActorRole, ConflictParty[]>();
-    if (!detail) return map;
-    for (const link of detail.parties) {
+    const map = new Map<ActorRole, CrisisDetail["actors"]>();
+    const parties = detail?.conflict_context?.parties ?? [];
+    for (const link of parties) {
       const arr = map.get(link.role) ?? [];
       arr.push(link);
       map.set(link.role, arr);
@@ -192,6 +114,8 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
   const handleJump = (id: string) => {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+
+  const ctx = detail?.conflict_context ?? null;
 
   return (
     <aside
@@ -246,26 +170,36 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                 flexWrap: "wrap",
               }}
             >
-              <StatusChip status={detail.status} />
-              <CountryLine
-                primary={detail.primary_iso3}
-                secondary={detail.secondary_iso3s}
-              />
-              {detail.conflict_type && (
-                <>
-                  <span style={{ color: colors.textDim }}>·</span>
-                  <span>{detail.conflict_type}</span>
-                </>
+              {ctx ? (
+                <span
+                  style={{
+                    color: colors.oliveLight,
+                    border: `1px solid ${colors.oliveDim}`,
+                    padding: "1px 6px",
+                    fontSize: 10,
+                    letterSpacing: "0.14em",
+                  }}
+                >
+                  {ctx.name.toUpperCase()}
+                </span>
+              ) : (
+                <span
+                  style={{
+                    color: colors.textDim,
+                    border: `1px solid ${colors.rule}`,
+                    padding: "1px 6px",
+                    fontSize: 10,
+                    letterSpacing: "0.14em",
+                  }}
+                  title="No named conflict in the registry claims this region"
+                >
+                  NO NAMED CONFLICT
+                </span>
               )}
+              <span>{detail.country_iso3 ?? detail.country ?? ""}</span>
               <span style={{ color: colors.textDim }}>·</span>
               <span>
-                {detail.status === "active"
-                  ? `active — last recorded activity ${formatYmd(detail.last_event_at)}`
-                  : detail.status === "frozen"
-                    ? `dormant — last activity ${formatMonth(detail.last_event_at)}`
-                    : detail.status === "emerging"
-                      ? "emerging — auto-discovered, unconfirmed"
-                      : `last activity ${formatYmd(detail.last_event_at)}`}
+                activity through week of {detail.latest_agg_week ?? "—"}
               </span>
             </div>
           )}
@@ -334,13 +268,13 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
 
           {detail && (
             <>
-              {/* 01 AT A GLANCE */}
+              {/* 01 RIGHT NOW */}
               <section style={{ marginBottom: space.xl }}>
                 <SectionHeader
-                  id="cc-glance"
+                  id="rr-now"
                   num="01"
-                  stamp="AT A GLANCE"
-                  subline="the conflict in a few numbers and a paragraph"
+                  stamp="RIGHT NOW"
+                  subline="recorded activity in the last four weeks, from ACLED's weekly aggregates"
                 />
                 <div
                   style={{
@@ -351,24 +285,22 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                   }}
                 >
                   <StatTile
-                    label="DURATION"
-                    value={formatDuration(
-                      detail.started_at,
-                      detail.last_event_at,
-                      detail.status === "active",
-                    )}
+                    label="EVENTS · 4 WEEKS"
+                    value={detail.violence_4w_events.toLocaleString()}
+                    hint={`to ${detail.latest_agg_week ?? "—"}`}
                   />
                   <StatTile
-                    label="EVENTS · LAST 4 WEEKS"
-                    value={(detail.stats.recent_4w_events ?? 0).toLocaleString()}
+                    label="REPORTED DEATHS · 4 WEEKS"
+                    value={detail.violence_4w_fatalities.toLocaleString()}
                   />
                   <StatTile
-                    label="FATALITIES · LAST 4 WEEKS"
-                    value={(detail.stats.recent_4w_fatalities ?? 0).toLocaleString()}
-                  />
-                  <StatTile
-                    label="TOTAL INCIDENTS ON FILE"
-                    value={detail.stats.total_events.toLocaleString()}
+                    label="PEOPLE IN AFFECTED AREA"
+                    value={
+                      detail.violence_4w_pop_exposure
+                        ? detail.violence_4w_pop_exposure.toLocaleString()
+                        : "—"
+                    }
+                    hint="admin1 population"
                   />
                 </div>
                 {detail.stats.gdelt_7d_reports > 0 && (
@@ -380,11 +312,11 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                       letterSpacing: "0.06em",
                       marginBottom: space.md,
                     }}
-                    title="Machine-coded event reports from the GDELT stream — a freshness signal, not verified incident records"
+                    title="Machine-coded news reports from the GDELT stream — a freshness signal, not verified incident records"
                   >
-                    ▸ {detail.stats.gdelt_7d_reports.toLocaleString()} violent-event
-                    report{detail.stats.gdelt_7d_reports === 1 ? "" : "s"} in the
-                    last 7 days
+                    ▸ {detail.stats.gdelt_7d_reports.toLocaleString()} news report
+                    {detail.stats.gdelt_7d_reports === 1 ? "" : "s"} in the last 7
+                    days
                     <span style={{ color: colors.textDim }}> · GDELT signal</span>
                   </div>
                 )}
@@ -392,65 +324,20 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                   <>
                     <IntensitySparkline
                       weeks={detail.intensity_52w}
-                      caption="WEEKLY EVENT COUNT — ALL ROUTED SOURCES"
+                      caption="WEEKLY EVENT COUNT — ACLED AGGREGATES"
                     />
                     <EventTypeBreakdown weeks={detail.intensity_52w} />
                   </>
-                )}
-                {detail.summary ? (
-                  <p
-                    className="serif"
-                    style={{
-                      margin: 0,
-                      fontSize: 14,
-                      lineHeight: 1.7,
-                      color: colors.text,
-                    }}
-                  >
-                    {detail.summary}
-                  </p>
-                ) : (
-                  <p
-                    className="label"
-                    style={{
-                      margin: 0,
-                      fontSize: 11,
-                      color: colors.textDim,
-                      fontStyle: "italic",
-                    }}
-                  >
-                    No background summary on file.
-                  </p>
-                )}
-                {detail.wikipedia_url && (
-                  <div style={{ marginTop: space.sm }}>
-                    <a
-                      href={detail.wikipedia_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{
-                        fontFamily: fonts.mono,
-                        fontSize: 11,
-                        color: colors.oliveLight,
-                        letterSpacing: "0.16em",
-                        border: `1px solid ${colors.oliveDim}`,
-                        padding: `${space.xs}px ${space.sm}px`,
-                        textDecoration: "none",
-                      }}
-                    >
-                      [ READ ON WIKIPEDIA ]
-                    </a>
-                  </div>
                 )}
               </section>
 
               {/* 02 LATEST REPORTING */}
               <section style={{ marginBottom: space.xl }}>
                 <SectionHeader
-                  id="cc-reports"
+                  id="rr-reports"
                   num="02"
                   stamp="LATEST REPORTING"
-                  subline="recent situation reports from humanitarian agencies on the ground"
+                  subline="recent situation reports from humanitarian agencies covering this country"
                   count={detail.field_reports.length}
                 />
                 <FieldReportList reports={detail.field_reports} />
@@ -459,13 +346,47 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
               {/* 03 WHO IS INVOLVED */}
               <section style={{ marginBottom: space.xl }}>
                 <SectionHeader
-                  id="cc-who"
+                  id="rr-who"
                   num="03"
                   stamp="WHO IS INVOLVED"
-                  subline="the sides of the conflict, who is mediating, and who is caught in the middle"
-                  count={detail.parties.length}
+                  subline={
+                    ctx
+                      ? `curated parties to ${ctx.name}`
+                      : "no named conflict claims this region"
+                  }
+                  count={ctx ? ctx.parties.length : undefined}
                 />
-                {detail.parties.length === 0 ? (
+                {ctx ? (
+                  <>
+                    {ctx.summary && (
+                      <p
+                        className="serif"
+                        style={{
+                          margin: `0 0 ${space.md}px 0`,
+                          fontSize: 14,
+                          lineHeight: 1.7,
+                          color: colors.text,
+                        }}
+                      >
+                        {ctx.summary}
+                      </p>
+                    )}
+                    {ROLE_GROUPS.map((rg) => {
+                      const actors = partiesByRole.get(rg.role) ?? [];
+                      if (actors.length === 0) return null;
+                      return (
+                        <div key={rg.role} style={{ marginBottom: space.md }}>
+                          <SubHeader
+                            stamp={rg.label}
+                            subline={rg.subline}
+                            count={actors.length}
+                          />
+                          <ActorList actors={actors} sourceIndex={sourceIndex} />
+                        </div>
+                      );
+                    })}
+                  </>
+                ) : (
                   <p
                     className="serif"
                     style={{
@@ -476,58 +397,20 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                       lineHeight: 1.6,
                     }}
                   >
-                    No curated parties on file yet for this conflict.
+                    Violence recorded here is not attributed to a named conflict in
+                    the registry. The incidents below name the actors involved as
+                    their sources reported them.
                   </p>
-                ) : (
-                  <>
-                    {ROLE_GROUPS.map((rg) => {
-                      const actors = partiesByRole.get(rg.role) ?? [];
-                      if (actors.length === 0) return null;
-                      const PREVIEW = 5;
-                      const visible = showAllParties
-                        ? actors
-                        : actors.slice(0, PREVIEW);
-                      return (
-                        <div key={rg.role} style={{ marginBottom: space.md }}>
-                          <SubHeader
-                            stamp={rg.label}
-                            subline={rg.subline}
-                            count={actors.length}
-                          />
-                          <ActorList actors={visible} sourceIndex={sourceIndex} />
-                        </div>
-                      );
-                    })}
-                    {detail.parties.length > 5 && (
-                      <button
-                        onClick={() => setShowAllParties((v) => !v)}
-                        style={{
-                          background: "none",
-                          border: "none",
-                          padding: `${space.xs}px 0`,
-                          cursor: "pointer",
-                          fontFamily: fonts.mono,
-                          fontSize: 11,
-                          color: colors.oliveLight,
-                          letterSpacing: "0.1em",
-                        }}
-                      >
-                        {showAllParties
-                          ? "[ collapse ]"
-                          : `[ show all ${detail.parties.length} ]`}
-                      </button>
-                    )}
-                  </>
                 )}
               </section>
 
-              {/* 04 HOW IT'S UNFOLDING */}
+              {/* 04 INCIDENT ARCHIVE */}
               <section style={{ marginBottom: space.xl }}>
                 <SectionHeader
-                  id="cc-when"
+                  id="rr-archive"
                   num="04"
-                  stamp="HOW IT'S UNFOLDING"
-                  subline="individual incidents routed to this conflict — sourced from ACLED and UCDP; near-real-time GDELT activity appears as the signal count above"
+                  stamp="INCIDENT ARCHIVE"
+                  subline="individual incidents with published descriptions — these lag the counts above, since ACLED embargoes event-level records for ~12 months and UCDP publishes a month or two behind"
                   count={detail.events.length}
                 />
                 {detail.events.length === 0 ? (
@@ -541,24 +424,31 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                       lineHeight: 1.6,
                     }}
                   >
-                    Activity is recorded in the weekly aggregates above, but
-                    no individual incident records are attached yet. Detailed
-                    events populate as the ACLED API window advances and
-                    UCDP/GDELT feeds match this footprint.
+                    Activity here is recorded in the weekly counts above, but no
+                    individual incident records have been published for this region
+                    yet.
                   </p>
                 ) : (
                   (() => {
-                    const TIMELINE_LIMIT = 10;
+                    const LIMIT = 10;
                     const visible = showAllTimeline
                       ? detail.events
-                      : detail.events.slice(0, TIMELINE_LIMIT);
+                      : detail.events.slice(0, LIMIT);
                     const hidden = detail.events.length - visible.length;
+                    const newest = detail.events[0]?.occurred_at ?? null;
                     return (
                       <>
-                        <EventTimeline
-                          events={visible as CrisisEvent[]}
-                          sourceIndex={sourceIndex}
-                        />
+                        <div
+                          className="label"
+                          style={{
+                            fontSize: 10,
+                            color: colors.textDim,
+                            marginBottom: space.sm,
+                          }}
+                        >
+                          MOST RECENT PUBLISHED INCIDENT — {formatYmd(newest)}
+                        </div>
+                        <EventTimeline events={visible} sourceIndex={sourceIndex} />
                         {(hidden > 0 || showAllTimeline) && (
                           <button
                             onClick={() => setShowAllTimeline((v) => !v)}
@@ -584,23 +474,11 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                 )}
               </section>
 
-              {/* 05 WHERE IT'S HAPPENING */}
-              <section style={{ marginBottom: space.xl }}>
-                <SectionHeader
-                  id="cc-where"
-                  num="05"
-                  stamp="WHERE IT'S HAPPENING"
-                  subline="the admin1 regions seeing the most activity"
-                  count={detail.top_admin1s.length}
-                />
-                <TopAdmin1List rows={detail.top_admin1s} />
-              </section>
-
-              {/* 06 SOURCES */}
+              {/* 05 SOURCES */}
               <section>
                 <SectionHeader
-                  id="cc-sources"
-                  num="06"
+                  id="rr-sources"
+                  num="05"
                   stamp="SOURCES"
                   subline="every claim above traces back to one of these"
                   count={detail.sources.length}

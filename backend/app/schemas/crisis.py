@@ -20,6 +20,9 @@ class CrisisStats(BaseModel):
     # Population exposure is admin1-population for any week with ≥1 event,
     # so MAX (not SUM) over weeks is the correct fold.
     recent_population_exposed: int | None = None
+    # Machine-coded GDELT reports routed here in the last 7 days — a
+    # freshness signal, not incident records (GDELT rows carry no prose).
+    gdelt_7d_reports: int = 0
 
 
 class IntensityWeek(BaseModel):
@@ -136,6 +139,17 @@ class ActorLinkOut(BaseModel):
     source_id: int | None
 
 
+class ConflictContext(BaseModel):
+    """The named conflict this region belongs to, when the registry claims
+    it. Absent for regions nobody has named — most criminal violence."""
+
+    slug: str
+    name: str
+    summary: str | None
+    conflict_type: str | None
+    parties: list[ActorLinkOut]
+
+
 class CrisisDetail(CrisisBase):
     model_config = ConfigDict(from_attributes=True)
 
@@ -151,3 +165,11 @@ class CrisisDetail(CrisisBase):
     events: list[CrisisEventOut]
     stats: CrisisStats
     intensity_52w: list[IntensityWeek] = Field(default_factory=list)
+    # Current activity rollup — the same figures that size and colour the dot.
+    violence_4w_events: int = 0
+    violence_4w_fatalities: int = 0
+    violence_4w_pop_exposure: int | None = None
+    latest_agg_week: date | None = None
+    # Current narrative (ReliefWeb) and named-conflict context.
+    field_reports: list[SourceOut] = Field(default_factory=list)
+    conflict_context: ConflictContext | None = None
