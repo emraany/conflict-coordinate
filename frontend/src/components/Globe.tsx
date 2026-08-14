@@ -230,6 +230,15 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
     [showBorders, countriesGeo],
   );
 
+  // Regions significant enough to carry a standing label on the globe.
+  const labelled: PointDatum[] = useMemo(() => {
+    const ranked = [...points].sort(
+      (a, b) =>
+        b.fatalities_4w - a.fatalities_4w || b.events_4w - a.events_4w,
+    );
+    return ranked.slice(0, 45);
+  }, [points]);
+
   // Pulse only the most lethal regions — every dot is current, so a ring on
   // each would be noise rather than signal.
   const rings: RingDatum[] = useMemo(() => {
@@ -385,12 +394,30 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
             font-size: 11px;
             letter-spacing: 0.08em;
           ">
-            <div style="color:${p.__color};font-size:10px;letter-spacing:0.2em;">[ ${p.conflict ? p.conflict.name.toUpperCase() : "NO NAMED CONFLICT"} ]</div>
-            <div style="margin-top:2px;">${p.name}</div>
-            <div style="color:${colors.textMuted};font-size:10px;margin-top:2px;">${p.events_4w} events${p.fatalities_4w > 0 ? ` · † ${p.fatalities_4w}` : ""} · 4 wks to ${formatWeek(p.latest_week)}</div>
+            <div style="font-size:13px;">${p.name}</div>
+            <div style="color:${colors.textMuted};font-size:10px;margin-top:3px;">${p.events_4w} events${p.fatalities_4w > 0 ? ` · † ${p.fatalities_4w}` : ""} · 4 wks to ${formatWeek(p.latest_week)}</div>
+            ${
+              p.conflict
+                ? `<div style="color:${colors.oliveLight};font-size:10px;margin-top:3px;">part of ${p.conflict.name}</div>`
+                : ""
+            }
           </div>`;
         }}
         onPointClick={(p) => onSelect((p as PointDatum).slug)}
+        // Standing labels for the most significant regions, so the globe is
+        // readable without hovering every dot. Labelling all 350 would be a
+        // wall of text, so only the top slice by activity gets one.
+        labelsData={viewMode === "dots" ? labelled : []}
+        labelLat={(d: object) => (d as PointDatum).lat}
+        labelLng={(d: object) => (d as PointDatum).lng}
+        labelText={(d: object) => (d as PointDatum).admin1 ?? (d as PointDatum).name}
+        labelColor={() => colors.text}
+        labelSize={0.42}
+        labelDotRadius={0}
+        labelResolution={2}
+        labelAltitude={0.012}
+        labelIncludeDot={false}
+        onLabelClick={(d: object) => onSelect((d as PointDatum).slug)}
         ringsData={viewMode === "dots" ? rings : []}
         ringLat={(d) => (d as RingDatum).lat}
         ringLng={(d) => (d as RingDatum).lng}

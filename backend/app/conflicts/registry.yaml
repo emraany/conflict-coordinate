@@ -86,20 +86,39 @@ conflicts:
       An armed conflict that began with a Hamas-led attack on southern Israel
       on 7 October 2023, followed by a sustained Israeli military operation
       in the Gaza Strip. The war has produced a large humanitarian crisis
-      in Gaza and regional spillover involving Hezbollah in Lebanon.
+      in Gaza.
     parties:
       - { actor: il-state-forces, role: party }
       - { actor: hamas,           role: party }
       - { actor: pij,             role: party }
-      - { actor: hezbollah,       role: party }
     footprint:
       - { iso3: ISR, admin1: HaDarom }
       - { iso3: ISR, admin1: HaMerkaz }
-      - { iso3: ISR, admin1: HaZafon }
       - { iso3: ISR, admin1: Jerusalem }
       - { iso3: ISR, admin1: Tel Aviv }
       - { iso3: PSE, admin1: Gaza Strip }
-      - { iso3: PSE, admin1: West Bank }
+    routing:
+      actor_patterns:
+        - "Hamas%"
+        - "Al-Qassam%"
+        - "Palestinian Islamic Jihad%"
+
+  # Split out of israel-hamas-war: the Lebanese front is a distinct conflict
+  # with distinct parties, and labelling Lebanese regions "Israel–Hamas War
+  # (Gaza)" was simply wrong. Israeli state forces are not given an actor
+  # pattern in either entry — a broad "Military Forces of Israel%" rule would
+  # claim events on whichever front loaded first. Geography decides instead.
+  - slug: israel-hezbollah-conflict
+    name: Israel–Hezbollah conflict
+    conflict_type: interstate
+    status: active
+    primary_iso3: LBN
+    secondary_iso3s: [ISR]
+    wikipedia_url: https://en.wikipedia.org/wiki/Israel%E2%80%93Hezbollah_conflict_(2023%E2%80%93present)
+    parties:
+      - { actor: il-state-forces, role: party }
+      - { actor: hezbollah,       role: party }
+    footprint:
       - { iso3: LBN, admin1: Al Nabatieh }
       - { iso3: LBN, admin1: South }
       - { iso3: LBN, admin1: Baalbek-Hermel }
@@ -108,13 +127,22 @@ conflicts:
       - { iso3: LBN, admin1: Bekaa }
       - { iso3: LBN, admin1: North }
       - { iso3: LBN, admin1: Akkar }
+      - { iso3: ISR, admin1: HaZafon }
     routing:
       actor_patterns:
-        - "Military Forces of Israel%"
-        - "Hamas%"
-        - "Al-Qassam%"
-        - "Palestinian Islamic Jihad%"
         - "Hezbollah%"
+
+  - slug: west-bank-conflict
+    name: Israeli–Palestinian conflict in the West Bank
+    conflict_type: asymmetric
+    status: active
+    primary_iso3: PSE
+    secondary_iso3s: [ISR]
+    wikipedia_url: https://en.wikipedia.org/wiki/Israeli%E2%80%93Palestinian_conflict
+    parties:
+      - { actor: il-state-forces, role: party }
+    footprint:
+      - { iso3: PSE, admin1: West Bank }
 
   - slug: sudan-saf-rsf-war
     name: Sudanese Civil War (SAF–RSF)
