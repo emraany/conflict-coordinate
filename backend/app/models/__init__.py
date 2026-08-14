@@ -10,6 +10,7 @@ from app.models.conflict import (
 from app.models.crisis import ActorRole, Crisis, CrisisActor, CrisisStatus
 from app.models.entity_mention import EntityMention
 from app.models.event import CrisisEvent
+from app.models.ingest_run import IngestRun
 from app.models.intensity import CrisisIntensityWeekly
 from app.models.slug_alias import CrisisSlugAlias
 from app.models.source import Source, SourceType
@@ -32,6 +33,7 @@ __all__ = [
     "CrisisSlugAlias",
     "CrisisStatus",
     "EntityMention",
+    "IngestRun",
     "Source",
     "SourceType",
 ]

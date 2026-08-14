@@ -28,7 +28,7 @@ def _run_in_thread() -> None:
     try:
         db = SessionLocal()
         try:
-            result = run_all_sources(db)
+            result = run_all_sources(db, trigger="api")
         finally:
             db.close()
         _ingest_status["last_result"] = result

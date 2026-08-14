@@ -87,6 +87,9 @@ EXPECTED_COLUMNS: tuple[str, ...] = (
 ACTIVE_WINDOW_WEEKS = 4
 # Crises with no activity in this many weeks are dropped from the globe.
 RETAIN_WINDOW_WEEKS = 52
+# Ceiling on how much of the globe one run may delete. ~350 dots turn over by
+# a handful a week; a fifth disappearing at once means a bad fetch, not peace.
+SWEEP_MAX_DELETE_FRACTION = 0.20
 
 # ACLED's landing pages 403 anything that looks like a bot UA, but the xlsx
 # files are gated by bearer token regardless of UA. Use a generic browser UA
@@ -526,6 +529,9 @@ class ACLEDAggregatedSource(IngestionSource):
     # which would wipe lagged-source citations. Set False; the lagged source
     # (re)inserts the ACLED citation as part of its event sourcing.
     owns_sources = False
+    # Set by fetch(): True only when all six regions downloaded and parsed.
+    # The runner reads it before letting sweep_dropped delete anything.
+    fetch_complete = False
 
     def before_run(self, db: Session) -> None:
         # No wholesale wipe — we want stable identity. Records that age out of
@@ -534,6 +540,7 @@ class ACLEDAggregatedSource(IngestionSource):
         return None
 
     def fetch(self) -> list[CrisisRecord]:  # noqa: C901 — orchestration
+        self.fetch_complete = False
         if not settings.acled_enabled:
             return []
         if not settings.acled_username or not settings.acled_password:
@@ -541,6 +548,7 @@ class ACLEDAggregatedSource(IngestionSource):
             return []
 
         records: list[CrisisRecord] = []
+        regions_ok = 0
         ref_today = _reference_today()
 
         with httpx.Client(timeout=120.0, headers={"User-Agent": USER_AGENT}) as client:
@@ -573,6 +581,7 @@ class ACLEDAggregatedSource(IngestionSource):
                     rec = _build_record(cell, ref_today)
                     if rec is not None:
                         records.append(rec)
+                regions_ok += 1
                 logger.info(
                     "acled-agg: %s → %d crises emitted from %d rows",
                     region,
@@ -580,6 +589,13 @@ class ACLEDAggregatedSource(IngestionSource):
                     len(rows),
                 )
 
+        self.fetch_complete = regions_ok == len(REGIONS)
+        if not self.fetch_complete:
+            logger.warning(
+                "acled-agg: only %d/%d regions parsed — this fetch is partial",
+                regions_ok,
+                len(REGIONS),
+            )
         return records
 
     def post_upsert_alias_seed(self, db: Session, records: list[CrisisRecord]) -> None:
@@ -594,8 +610,6 @@ class ACLEDAggregatedSource(IngestionSource):
         """Delete crises whose (iso3, admin1_norm) wasn't emitted this run AND
         have no admin-curated content (i.e. truly aged out of the 52-week
         window). Crises with admin_curated actor links are spared."""
-        keep_iso3 = {k[0] for k in present_keys}
-        keep_admin1 = {k[1] for k in present_keys}
         # Pick candidates: agg-sourced crises that aren't in present_keys.
         from app.models import CrisisActor
 
@@ -605,7 +619,7 @@ class ACLEDAggregatedSource(IngestionSource):
                 Crisis.admin1_norm.is_not(None),
             )
         ).all()
-        deleted = 0
+        doomed: list[int] = []
         for crisis in candidates:
             if (crisis.country_iso3, crisis.admin1_norm) in present_keys:
                 continue
@@ -619,6 +633,22 @@ class ACLEDAggregatedSource(IngestionSource):
             )
             if curated is not None:
                 continue
-            db.execute(delete(Crisis).where(Crisis.id == crisis.id))
-            deleted += 1
-        return deleted
+            doomed.append(crisis.id)
+
+        # Second brake, independent of fetch_complete: a real week ages out a
+        # handful of regions, never a large slice of the globe. If this run
+        # wants to delete more than that, something upstream is wrong and the
+        # right answer is to keep stale rows and shout, not to delete.
+        if candidates and len(doomed) > len(candidates) * SWEEP_MAX_DELETE_FRACTION:
+            logger.error(
+                "acled-agg: refusing to drop %d/%d crises (>%.0f%%) — "
+                "treating this fetch as unreliable",
+                len(doomed),
+                len(candidates),
+                SWEEP_MAX_DELETE_FRACTION * 100,
+            )
+            return 0
+
+        for crisis_id in doomed:
+            db.execute(delete(Crisis).where(Crisis.id == crisis_id))
+        return len(doomed)

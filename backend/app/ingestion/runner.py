@@ -12,6 +12,7 @@ gate whether the runner replaces that slice of crisis content. False means
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select, text, update
@@ -43,10 +44,13 @@ from app.models import (
     CrisisActor,
     CrisisIntensityWeekly,
     CrisisStatus,
+    IngestRun,
     Source,
     SourceType,
 )
 from app.models.event import CrisisEvent
+
+logger = logging.getLogger(__name__)
 
 # Cap the per-run NER pass so a large description backlog can't stall the
 # ingest cycle; the remainder drains on subsequent runs.
@@ -508,10 +512,51 @@ def _promote_emerging_conflicts(db: Session, threshold: int) -> int:
     return result.rowcount or 0
 
 
-def run_all_sources(db: Session | None = None) -> dict:
+def _start_ingest_run(trigger: str) -> int | None:
+    """Open an ingest_runs row on its own session.
+
+    Deliberately separate from the ingest session: if that one is poisoned by
+    a failed source, the record of the failure still has to land.
+    """
+    try:
+        with SessionLocal() as rec_db:
+            run = IngestRun(trigger=trigger)
+            rec_db.add(run)
+            rec_db.commit()
+            return run.id
+    except Exception:
+        logger.exception("could not open ingest_runs row")
+        return None
+
+
+def _finish_ingest_run(
+    run_id: int | None, ok: bool, result: dict, error: str | None
+) -> None:
+    if run_id is None:
+        return
+    try:
+        with SessionLocal() as rec_db:
+            rec_db.execute(
+                update(IngestRun)
+                .where(IngestRun.id == run_id)
+                .values(
+                    finished_at=datetime.now(UTC),
+                    ok=ok,
+                    result=result,
+                    error=error,
+                )
+            )
+            rec_db.commit()
+    except Exception:
+        logger.exception("could not close ingest_runs row %s", run_id)
+
+
+def run_all_sources(db: Session | None = None, trigger: str = "cron") -> dict:
     close_after = db is None
     db = db or SessionLocal()
     result: dict = {"sources": [], "total_inserted": 0, "total_updated": 0}
+    run_id = _start_ingest_run(trigger)
+    error: str | None = None
     try:
         # Build the routing index once so attach-only sources can set
         # conflict_id at insert time (events stay routed even if this run
@@ -521,61 +566,86 @@ def run_all_sources(db: Session | None = None) -> dict:
         routing_idx = _load_routing_index(db)
 
         for source in SOURCES:
-            if getattr(source, "attach_only", False):
-                counts = source.attach_events(db, routing_idx)
-                db.commit()
-                result["sources"].append(
-                    {
-                        "source": source.name,
-                        "attached": counts.get("attached", 0),
-                        "skipped": counts.get("skipped", 0),
-                    }
-                )
-                continue
-
-            source.before_run(db)
-            records = source.fetch()
-            inserted = 0
-            updated = 0
-            present_keys: set[tuple[str, str]] = set()
-            for rec in records:
-                crisis, created = _upsert_crisis(db, source.name, rec)
-                if rec.country_iso3 and rec.admin1_norm:
-                    present_keys.add((rec.country_iso3, rec.admin1_norm))
-
-                if source.owns_sources:
-                    source_rows = _replace_sources(db, crisis, rec.sources, source.name)
-                else:
-                    source_rows = []
-                if source.owns_actors:
-                    _replace_actor_links(
-                        db, crisis, rec.actors, source_rows, source.name
+            # Each source is isolated: an unattended run must degrade, not
+            # abort. Everything below the loop — dot rollups, routing, the
+            # staleness sweeps — is what keeps the globe current, and it
+            # stays useful even when one upstream feed is down.
+            try:
+                if getattr(source, "attach_only", False):
+                    counts = source.attach_events(db, routing_idx)
+                    db.commit()
+                    result["sources"].append(
+                        {
+                            "source": source.name,
+                            "attached": counts.get("attached", 0),
+                            "skipped": counts.get("skipped", 0),
+                        }
                     )
-                if source.owns_events:
-                    _replace_events(db, crisis, rec.events, source_rows, source.name)
-                if rec.intensity_rows:
-                    _replace_intensity_rows(db, crisis.id, rec.intensity_rows)
+                    continue
 
-                if created:
-                    inserted += 1
-                else:
-                    updated += 1
+                source.before_run(db)
+                records = source.fetch()
+                inserted = 0
+                updated = 0
+                present_keys: set[tuple[str, str]] = set()
+                for rec in records:
+                    crisis, created = _upsert_crisis(db, source.name, rec)
+                    if rec.country_iso3 and rec.admin1_norm:
+                        present_keys.add((rec.country_iso3, rec.admin1_norm))
 
-            # Source-specific post-pass hooks.
-            seed_aliases = getattr(source, "post_upsert_alias_seed", None)
-            if seed_aliases is not None:
-                seed_aliases(db, records)
-            sweep_dropped = getattr(source, "sweep_dropped", None)
-            sweep_count = 0
-            if sweep_dropped is not None and present_keys:
-                sweep_count = sweep_dropped(db, present_keys)
-            db.commit()
-            entry: dict = {"source": source.name, "inserted": inserted, "updated": updated}
-            if sweep_count:
-                entry["dropped"] = sweep_count
-            result["sources"].append(entry)
-            result["total_inserted"] += inserted
-            result["total_updated"] += updated
+                    if source.owns_sources:
+                        source_rows = _replace_sources(
+                            db, crisis, rec.sources, source.name
+                        )
+                    else:
+                        source_rows = []
+                    if source.owns_actors:
+                        _replace_actor_links(
+                            db, crisis, rec.actors, source_rows, source.name
+                        )
+                    if source.owns_events:
+                        _replace_events(db, crisis, rec.events, source_rows, source.name)
+                    if rec.intensity_rows:
+                        _replace_intensity_rows(db, crisis.id, rec.intensity_rows)
+
+                    if created:
+                        inserted += 1
+                    else:
+                        updated += 1
+
+                # Source-specific post-pass hooks.
+                seed_aliases = getattr(source, "post_upsert_alias_seed", None)
+                if seed_aliases is not None:
+                    seed_aliases(db, records)
+                entry: dict = {
+                    "source": source.name,
+                    "inserted": inserted,
+                    "updated": updated,
+                }
+                # sweep_dropped DELETES crises absent from this run. A source
+                # that only partly fetched still emits records, so gate the
+                # sweep on the source vouching for its own fetch — otherwise
+                # three failed region downloads silently delete half the globe.
+                sweep_dropped = getattr(source, "sweep_dropped", None)
+                if sweep_dropped is not None and present_keys:
+                    if getattr(source, "fetch_complete", True):
+                        sweep_count = sweep_dropped(db, present_keys)
+                        if sweep_count:
+                            entry["dropped"] = sweep_count
+                    else:
+                        logger.warning(
+                            "%s: incomplete fetch — skipping drop sweep", source.name
+                        )
+                        entry["sweep_skipped"] = "incomplete fetch"
+                db.commit()
+                result["sources"].append(entry)
+                result["total_inserted"] += inserted
+                result["total_updated"] += updated
+            except Exception as exc:
+                db.rollback()
+                logger.exception("source %s failed", source.name)
+                result["sources"].append({"source": source.name, "error": str(exc)})
+                continue
 
         # Refresh the globe's dot layer from the freshly-ingested aggregates
         # before anything else in the tail — this is what the map reads.
@@ -641,11 +711,23 @@ def run_all_sources(db: Session | None = None) -> dict:
         # earlier in the tail. A big backlog drains over a few runs.
         ner_counts = ner_process_pending(db, max_events=NER_MAX_EVENTS_PER_RUN)
         result["ner"] = ner_counts
+    except Exception as exc:
+        error = str(exc)
+        raise
     finally:
+        # A run is only "ok" if the tail completed AND every source did.
+        # A recorded run that half-worked must not read as healthy.
+        source_failed = any("error" in s for s in result["sources"])
+        _finish_ingest_run(
+            run_id, ok=error is None and not source_failed, result=result, error=error
+        )
         if close_after:
             db.close()
     return result
 
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     print(run_all_sources())
