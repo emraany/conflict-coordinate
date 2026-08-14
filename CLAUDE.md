@@ -95,7 +95,14 @@ All flags default to `false`/empty — fixture data works standalone.
 | `UCDP_GED_VERSION` | `25.1` | UCDP GED dataset version string |
 | `UCDP_ATTACH_RADIUS_KM` | `150` | Max distance to attach a UCDP event to a crisis |
 | `STATUS_STALE_DAYS` | `90` | Active crises with no event in this many days are demoted to `frozen` (0 disables) |
-| `INGEST_SCHEDULE_HOURS` | `24` | Hours between automatic ingest runs (0 = disabled) |
+| `INGEST_SCHEDULE_TIME` | `""` | Optional in-server daily ingest at HH:MM UTC. Off by default — schedule the standalone worker instead (below) |
+
+Scheduled ingestion runs as a standalone worker, decoupled from the API server:
+
+```bash
+# crontab example — daily at 03:00 UTC
+0 3 * * * cd /path/to/Conflict/backend && uv run python -m app.ingestion.runner >> ~/.conflict-ingest.log 2>&1
+```
 
 ACLED OAuth tokens cached at `backend/.cache/acled_token.json` (gitignored).
 

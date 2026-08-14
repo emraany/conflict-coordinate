@@ -28,6 +28,8 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.conflicts.routing import route_event
+from app.ingestion.acled import _bump_conflicts_last_event
 from app.ingestion.base import CrisisRecord, IngestionSource
 from app.models import Crisis, Source, SourceType
 from app.models.event import CrisisEvent
@@ -244,7 +246,7 @@ class GDELTSource(IngestionSource):
     def fetch(self) -> list[CrisisRecord]:
         return []
 
-    def attach_events(self, db: Session) -> dict:  # noqa: C901
+    def attach_events(self, db: Session, routing_idx=None) -> dict:  # noqa: C901
         if not settings.gdelt_enabled:
             return {"attached": 0, "skipped": 0}
 
@@ -273,6 +275,7 @@ class GDELTSource(IngestionSource):
         skipped_no_crisis = 0
         skipped_incompatible = 0
         seen_ids: set[str] = set()
+        conflict_latest: dict[int, datetime] = {}
 
         for url in _latest_export_urls():
             for ev in _fetch_events_csv(url):
@@ -335,6 +338,18 @@ class GDELTSource(IngestionSource):
                 except ValueError:
                     occurred = datetime.now(UTC)
 
+                conflict_id = None
+                if routing_idx is not None:
+                    conflict_id = route_event(
+                        [
+                            (ev.get("Actor1Name") or "").strip(),
+                            (ev.get("Actor2Name") or "").strip(),
+                        ],
+                        iso3,
+                        admin1_norm,
+                        routing_idx,
+                    )
+
                 db.add(
                     CrisisEvent(
                         crisis_id=crisis_id,
@@ -348,10 +363,16 @@ class GDELTSource(IngestionSource):
                         lng=lng,
                         external_id=ext_id,
                         source_id=source_row.id if source_row else None,
+                        conflict_id=conflict_id,
                     )
                 )
                 attached += 1
+                if conflict_id is not None:
+                    prev_c = conflict_latest.get(conflict_id)
+                    if prev_c is None or occurred > prev_c:
+                        conflict_latest[conflict_id] = occurred
 
+        _bump_conflicts_last_event(db, conflict_latest)
         db.flush()
         logger.info(
             "gdelt: attached=%d skipped=%d (no_pip=%d no_crisis=%d "

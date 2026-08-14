@@ -112,5 +112,8 @@ class IngestionSource(ABC):
         # Hook for purge / prep before fetch(). Default no-op.
         return None
 
-    def attach_events(self, db) -> dict:  # type: ignore[no-untyped-def]
+    def attach_events(self, db, routing_idx=None) -> dict:  # type: ignore[no-untyped-def]
+        # `routing_idx` is a prebuilt `app.conflicts.routing.RoutingIndex`;
+        # attach-only sources use it to set `conflict_id` at insert time so
+        # events are routed even if the post-ingest tail never runs.
         return {"attached": 0, "skipped": 0}

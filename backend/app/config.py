@@ -54,9 +54,11 @@ class Settings(BaseSettings):
     # `frozen`. Tighter than crisis stale (admin1 cells can lull but the
     # parent conflict shouldn't). 0 disables.
     conflict_stale_days: int = Field(default=60)
-    # Daily scheduler — HH:MM in 24h UTC. Empty string disables the scheduler
-    # (manual /api/ingest/run only).
-    ingest_schedule_time: str = Field(default="03:00")
+    # In-server daily scheduler — HH:MM in 24h UTC. Disabled by default:
+    # scheduled ingestion should run as a standalone worker
+    # (`uv run python -m app.ingestion.runner` via cron/launchd) so long
+    # runs survive server restarts/reloads. Manual /api/ingest/run remains.
+    ingest_schedule_time: str = Field(default="")
 
     model_config = SettingsConfigDict(
         env_file=(REPO_ROOT / ".env"),

@@ -77,10 +77,13 @@ def extract_signature_entities(texts: list[str]) -> list[set[str]]:
     return [{t for _, t in ents} for ents in extract_signature_entities_labeled(texts)]
 
 
-def process_pending(db: Session, batch_size: int = 64) -> dict:
-    """Run NER on every event whose id is not yet present in entity_mentions.
+def process_pending(
+    db: Session, batch_size: int = 64, max_events: int | None = None
+) -> dict:
+    """Run NER on events whose id is not yet present in entity_mentions.
 
-    Returns counts {events_processed, mentions_inserted}.
+    `max_events` caps one pass so a large backlog drains across runs instead
+    of blocking the ingest cycle. Returns {events_processed, mentions_inserted}.
     """
     stmt = (
         select(CrisisEvent.id, CrisisEvent.description, CrisisEvent.source_id)
@@ -91,6 +94,8 @@ def process_pending(db: Session, batch_size: int = 64) -> dict:
             .exists()
         )
     )
+    if max_events is not None:
+        stmt = stmt.limit(max_events)
     rows = list(db.execute(stmt))
     if not rows:
         return {"events_processed": 0, "mentions_inserted": 0}

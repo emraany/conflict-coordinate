@@ -24,6 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.conflicts.routing import route_event
 from app.ingestion import wikipedia
 from app.ingestion.acled_auth import get_fresh_token, get_token
 from app.ingestion.base import IngestionSource
@@ -32,6 +33,7 @@ from app.models import (
     Actor,
     ActorRole,
     ActorType,
+    Conflict,
     Crisis,
     CrisisActor,
     Source,
@@ -222,12 +224,30 @@ def _existing_actors(db: Session, crisis_id: int) -> set[int]:
     return set(rows)
 
 
+def _event_actor_strings(ev: dict) -> list[str]:
+    """Raw actor names on an ACLED event, for conflict routing."""
+    out: list[str] = []
+    for key in ("actor1", "actor2"):
+        raw = (ev.get(key) or "").strip()
+        if raw:
+            out.append(raw)
+    for key in ("assoc_actor_1", "assoc_actor_2"):
+        raw = (ev.get(key) or "").strip()
+        for piece in raw.split(";"):
+            piece = piece.strip()
+            if piece:
+                out.append(piece)
+    return out
+
+
 def _attach_events_for_group(
     db: Session,
     crisis: Crisis,
     events: list[dict],
     wiki_client: httpx.Client | None,
     actor_cache: dict[str, tuple[str | None, str | None]],
+    routing_idx=None,
+    conflict_latest: dict[int, datetime] | None = None,
 ) -> tuple[int, int]:
     """Attach this group of ACLED events to one crisis. Returns
     (events_attached, actors_attached)."""
@@ -271,6 +291,15 @@ def _attach_events_for_group(
             centroid_lats.append(lat)
             centroid_lngs.append(lng)
 
+        conflict_id = None
+        if routing_idx is not None:
+            conflict_id = route_event(
+                _event_actor_strings(ev),
+                crisis.country_iso3,
+                crisis.admin1_norm,
+                routing_idx,
+            )
+
         db.add(
             CrisisEvent(
                 crisis_id=crisis.id,
@@ -283,6 +312,7 @@ def _attach_events_for_group(
                 lng=lng,
                 external_id=external_id,
                 source_id=src.id,
+                conflict_id=conflict_id,
             )
         )
         inserted_events += 1
@@ -291,6 +321,10 @@ def _attach_events_for_group(
         latest = crisis.last_event_at
         if latest is None or occurred > latest:
             crisis.last_event_at = occurred
+        if conflict_id is not None and conflict_latest is not None:
+            prev = conflict_latest.get(conflict_id)
+            if prev is None or occurred > prev:
+                conflict_latest[conflict_id] = occurred
 
     # Lazy display-centroid update: shift only if drift is meaningful.
     if centroid_lats and centroid_lngs:
@@ -404,6 +438,23 @@ def _attach_actors_for_group(
     return inserted
 
 
+def _bump_conflicts_last_event(
+    db: Session, conflict_latest: dict[int, datetime]
+) -> None:
+    """Advance Conflict.last_event_at for conflicts that received newer
+    routed events this run. Shared by the attach-only sources."""
+    if not conflict_latest:
+        return
+    conflicts = db.scalars(
+        select(Conflict).where(Conflict.id.in_(conflict_latest.keys()))
+    ).all()
+    for c in conflicts:
+        new_last = conflict_latest[c.id]
+        if c.last_event_at is None or new_last > c.last_event_at:
+            c.last_event_at = new_last
+    db.flush()
+
+
 def _purge_legacy_acled_clusters(db: Session) -> int:
     """One-shot cleanup of the old DBSCAN-clustered ACLED crises (source_name
     = 'acled' with no admin1_norm). They've been superseded by aggregated-
@@ -468,7 +519,7 @@ class ACLEDLaggedEventSource(IngestionSource):
         if purged:
             logger.info("acled-lagged: purged %d legacy DBSCAN crises", purged)
 
-    def attach_events(self, db: Session) -> dict:
+    def attach_events(self, db: Session, routing_idx=None) -> dict:
         if not settings.acled_enabled:
             return {"attached": 0, "skipped": 0}
         if not settings.acled_username or not settings.acled_password:
@@ -522,6 +573,7 @@ class ACLEDLaggedEventSource(IngestionSource):
                 },
             )
         actor_cache: dict[str, tuple[str | None, str | None]] = {}
+        conflict_latest: dict[int, datetime] = {}
         attached_events = 0
         attached_actors = 0
         skipped_no_crisis = 0
@@ -538,7 +590,8 @@ class ACLEDLaggedEventSource(IngestionSource):
                     skipped_no_crisis += len(group)
                     continue
                 ev_count, actor_count = _attach_events_for_group(
-                    db, crisis, group, wiki_client, actor_cache
+                    db, crisis, group, wiki_client, actor_cache,
+                    routing_idx, conflict_latest,
                 )
                 attached_events += ev_count
                 attached_actors += actor_count
@@ -556,6 +609,7 @@ class ACLEDLaggedEventSource(IngestionSource):
             if wiki_client is not None:
                 wiki_client.close()
 
+        _bump_conflicts_last_event(db, conflict_latest)
         db.commit()
         logger.info(
             "acled-lagged: attached=%d (events) actors=%d skipped_no_crisis=%d "

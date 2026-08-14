@@ -29,7 +29,8 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.ingestion.acled import _normalize_admin1
+from app.conflicts.routing import route_event
+from app.ingestion.acled import _bump_conflicts_last_event, _normalize_admin1
 from app.ingestion.base import CrisisRecord, IngestionSource
 from app.ingestion.countries import country_iso3 as _country_iso3
 from app.models import Crisis, Source, SourceType
@@ -100,6 +101,41 @@ def _fetch_version(
     return events
 
 
+def _probe_next_candidates(
+    client: httpx.Client, headers: dict, versions: list[str], max_probe: int = 6
+) -> list[str]:
+    """Auto-discover monthly candidate releases newer than the configured
+    ones (e.g. configured …,26.0.5 → probe 26.0.6, 26.0.7, …). Each probe is
+    a 1-row request; unknown versions 404 and stop the scan. Removes the
+    manual monthly bump of UCDP_CANDIDATE_VERSIONS."""
+    candidates = [v for v in versions if v.count(".") == 2]
+    if not candidates:
+        return []
+    try:
+        base = max(candidates, key=lambda v: tuple(int(p) for p in v.split(".")))
+        a, b, c = (int(p) for p in base.split("."))
+    except ValueError:
+        return []
+    found: list[str] = []
+    for i in range(1, max_probe + 1):
+        version = f"{a}.{b}.{c + i}"
+        try:
+            resp = client.get(
+                f"{_API_BASE}/gedevents/{version}",
+                params={"pagesize": 1, "page": 1},
+                headers=headers,
+                timeout=30.0,
+            )
+        except httpx.HTTPError:
+            break
+        if resp.status_code != 200:
+            break
+        found.append(version)
+    if found:
+        logger.info("ucdp: auto-discovered candidate versions %s", found)
+    return found
+
+
 def _fetch_events(client: httpx.Client) -> list[dict]:
     """Fetch the curated GED version plus any configured monthly candidate
     releases. Candidates carry event-level recency past the curated cutoff
@@ -112,6 +148,7 @@ def _fetch_events(client: httpx.Client) -> list[dict]:
     versions = [settings.ucdp_ged_version] + [
         v.strip() for v in settings.ucdp_candidate_versions.split(",") if v.strip()
     ]
+    versions += _probe_next_candidates(client, headers, versions)
     all_events: list[dict] = []
     for version in versions:
         batch = _fetch_version(client, headers, version, cutoff_str)
@@ -202,7 +239,7 @@ class UCDPSource(IngestionSource):
     def fetch(self) -> list[CrisisRecord]:
         return []
 
-    def attach_events(self, db: Session) -> dict:  # noqa: C901
+    def attach_events(self, db: Session, routing_idx=None) -> dict:  # noqa: C901
         if not settings.ucdp_enabled:
             return {"attached": 0, "skipped": 0}
         if not settings.ucdp_token:
@@ -226,6 +263,7 @@ class UCDPSource(IngestionSource):
         skipped_pip_used = 0  # admin1 came from PIP fallback (informational)
         seen_ids: set[str] = set()
         latest_per_crisis: dict[int, datetime] = {}
+        conflict_latest: dict[int, datetime] = {}
 
         for ev in events:
             event_id = str(ev.get("id") or "").strip()
@@ -302,6 +340,15 @@ class UCDPSource(IngestionSource):
             if source_url:
                 source_row = _upsert_source(db, crisis_id, source_url, headline)
 
+            conflict_id = None
+            if routing_idx is not None:
+                conflict_id = route_event(
+                    [(ev.get("side_a") or "").strip(), (ev.get("side_b") or "").strip()],
+                    iso3,
+                    admin1_norm,
+                    routing_idx,
+                )
+
             db.add(
                 CrisisEvent(
                     crisis_id=crisis_id,
@@ -317,6 +364,7 @@ class UCDPSource(IngestionSource):
                     lng=lng,
                     external_id=ext_id,
                     source_id=source_row.id if source_row else None,
+                    conflict_id=conflict_id,
                 )
             )
             attached += 1
@@ -324,6 +372,10 @@ class UCDPSource(IngestionSource):
             prev = latest_per_crisis.get(crisis_id)
             if prev is None or occurred > prev:
                 latest_per_crisis[crisis_id] = occurred
+            if conflict_id is not None:
+                prev_c = conflict_latest.get(conflict_id)
+                if prev_c is None or occurred > prev_c:
+                    conflict_latest[conflict_id] = occurred
 
         if latest_per_crisis:
             crises = (
@@ -338,6 +390,7 @@ class UCDPSource(IngestionSource):
                 if c.last_event_at is None or new_last > c.last_event_at:
                     c.last_event_at = new_last
 
+        _bump_conflicts_last_event(db, conflict_latest)
         db.flush()
         logger.info(
             "ucdp: attached=%d skipped=%d (no_admin1=%d no_crisis=%d) pip_used=%d",

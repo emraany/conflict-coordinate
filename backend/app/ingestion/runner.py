@@ -48,6 +48,10 @@ from app.models import (
 )
 from app.models.event import CrisisEvent
 
+# Cap the per-run NER pass so a large description backlog can't stall the
+# ingest cycle; the remainder drains on subsequent runs.
+NER_MAX_EVENTS_PER_RUN = 5000
+
 SOURCES: list[IngestionSource] = [
     FixtureSource(),
     ACLEDAggregatedSource(),
@@ -365,9 +369,16 @@ def run_all_sources(db: Session | None = None) -> dict:
     db = db or SessionLocal()
     result: dict = {"sources": [], "total_inserted": 0, "total_updated": 0}
     try:
+        # Build the routing index once so attach-only sources can set
+        # conflict_id at insert time (events stay routed even if this run
+        # dies before the backfill pass below).
+        from app.scripts.backfill_routing import _load_routing_index
+
+        routing_idx = _load_routing_index(db)
+
         for source in SOURCES:
             if getattr(source, "attach_only", False):
-                counts = source.attach_events(db)
+                counts = source.attach_events(db, routing_idx)
                 db.commit()
                 result["sources"].append(
                     {
@@ -422,35 +433,12 @@ def run_all_sources(db: Session | None = None) -> dict:
             result["total_inserted"] += inserted
             result["total_updated"] += updated
 
-        demoted = _sweep_stale_active(db, settings.status_stale_days)
-        if demoted:
-            db.commit()
-        result["status_demoted"] = demoted
-
-        ner_counts = ner_process_pending(db)
-        result["ner"] = ner_counts
-
-        # Wikipedia auto-discovery runs REPORT-ONLY: it surfaces candidate
-        # conflicts in the ingest result for an admin to curate into
-        # registry.yaml, but never inserts rows itself — an earlier auto-
-        # insert pass flooded the registry with junk/duplicate storylines.
-        try:
-            from app.ingestion.wikipedia_discovery import discover as _wiki_discover
-
-            wiki_report = _wiki_discover(commit=False)
-            result["wiki_discovery"] = {
-                "inspected": wiki_report.get("inspected"),
-                "candidates": wiki_report.get("inserted"),
-                "skipped_existing": wiki_report.get("skipped_existing"),
-            }
-        except Exception as exc:  # network errors etc. — don't fail ingest
-            result["wiki_discovery"] = {"error": str(exc)}
-
-        # Route freshly-ingested events to conflicts, refresh per-conflict
-        # rollups (centroid / last_event_at / intensity_4w_*), then run the
-        # auto-promote and conflict-stale sweep against the just-updated
-        # rollups. backfill() opens its own session and commits internally,
-        # so it's safe to call inside the outer session.
+        # Route + roll up FIRST — this is the load-bearing tail step, so it
+        # runs before anything slow or network-bound can kill the run.
+        # backfill() re-routes any events route-on-attach missed and refreshes
+        # per-conflict rollups (centroid / last_event_at / intensity_4w_*).
+        # It opens its own session and commits internally, so it's safe to
+        # call inside the outer session.
         from app.scripts.backfill_routing import backfill as _route_events
 
         route_report = _route_events(commit=True, flip_legacy=False)
@@ -470,6 +458,33 @@ def run_all_sources(db: Session | None = None) -> dict:
         if conflicts_frozen:
             db.commit()
         result["conflicts_frozen"] = conflicts_frozen
+
+        demoted = _sweep_stale_active(db, settings.status_stale_days)
+        if demoted:
+            db.commit()
+        result["status_demoted"] = demoted
+
+        # Wikipedia auto-discovery runs REPORT-ONLY: it surfaces candidate
+        # conflicts in the ingest result for an admin to curate into
+        # registry.yaml, but never inserts rows itself — an earlier auto-
+        # insert pass flooded the registry with junk/duplicate storylines.
+        try:
+            from app.ingestion.wikipedia_discovery import discover as _wiki_discover
+
+            wiki_report = _wiki_discover(commit=False)
+            result["wiki_discovery"] = {
+                "inspected": wiki_report.get("inspected"),
+                "candidates": wiki_report.get("inserted"),
+                "skipped_existing": wiki_report.get("skipped_existing"),
+            }
+        except Exception as exc:  # network errors etc. — don't fail ingest
+            result["wiki_discovery"] = {"error": str(exc)}
+
+        # NER runs LAST and capped per run — the spaCy pass over a large
+        # backlog takes minutes and used to starve routing when it sat
+        # earlier in the tail. A big backlog drains over a few runs.
+        ner_counts = ner_process_pending(db, max_events=NER_MAX_EVENTS_PER_RUN)
+        result["ner"] = ner_counts
     finally:
         if close_after:
             db.close()
