@@ -430,16 +430,17 @@ def run_all_sources(db: Session | None = None) -> dict:
         ner_counts = ner_process_pending(db)
         result["ner"] = ner_counts
 
-        # Wikipedia auto-discovery seeds emerging conflicts (admin curates
-        # later). Runs BEFORE routing so any new country_patterns added by the
-        # discovery script are visible to this cycle's routing pass.
+        # Wikipedia auto-discovery runs REPORT-ONLY: it surfaces candidate
+        # conflicts in the ingest result for an admin to curate into
+        # registry.yaml, but never inserts rows itself — an earlier auto-
+        # insert pass flooded the registry with junk/duplicate storylines.
         try:
             from app.ingestion.wikipedia_discovery import discover as _wiki_discover
 
-            wiki_report = _wiki_discover(commit=True)
+            wiki_report = _wiki_discover(commit=False)
             result["wiki_discovery"] = {
                 "inspected": wiki_report.get("inspected"),
-                "inserted": wiki_report.get("inserted"),
+                "candidates": wiki_report.get("inserted"),
                 "skipped_existing": wiki_report.get("skipped_existing"),
             }
         except Exception as exc:  # network errors etc. — don't fail ingest

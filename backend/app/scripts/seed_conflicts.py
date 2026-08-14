@@ -105,6 +105,16 @@ def _upsert_conflict(db: Session, entry: ConflictEntry) -> tuple[Conflict, bool]
         conflict.ucdp_conflict_id = entry.ucdp_conflict_id
         conflict.registry_source = "yaml"
         conflict.admin_curated = True
+    # Curated coordinate — fallback tier 3. Only applied when the routing
+    # backfill hasn't already placed the dot from events (tier 1) or
+    # footprint (tier 2); the backfill overwrites this whenever a better
+    # tier resolves.
+    if entry.lat is not None and entry.lng is not None:
+        if conflict.coord_source in (None, "curated_coordinate", "country_fallback"):
+            conflict.lat = entry.lat
+            conflict.lng = entry.lng
+            conflict.geom = f"SRID=4326;POINT({entry.lng} {entry.lat})"
+            conflict.coord_source = "curated_coordinate"
     db.flush()
     return conflict, created
 

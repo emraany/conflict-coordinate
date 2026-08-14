@@ -37,7 +37,7 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from statistics import mean
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -103,6 +103,29 @@ def _load_crisis_metadata(
     for r in actor_rows:
         actors_by_crisis[r.crisis_id].append(r.name)
     return crisis_meta, actors_by_crisis
+
+
+def _load_country_centroids(db: Session) -> dict[str, tuple[float, float]]:
+    """iso3 → mean(crises lat/lng). Tier-4 `country_fallback` coordinate —
+    approximate, display-only; never backs an `active` dot."""
+    rows = db.execute(
+        select(
+            Crisis.country_iso3,
+            func.avg(Crisis.lat),
+            func.avg(Crisis.lng),
+        )
+        .where(
+            Crisis.country_iso3.is_not(None),
+            Crisis.lat.is_not(None),
+            Crisis.lng.is_not(None),
+        )
+        .group_by(Crisis.country_iso3)
+    ).all()
+    return {
+        r[0]: (float(r[1]), float(r[2]))
+        for r in rows
+        if r[1] is not None and r[2] is not None
+    }
 
 
 def _load_footprint_centroids(db: Session) -> dict[int, tuple[float, float]]:
@@ -287,14 +310,26 @@ def backfill(commit: bool, flip_legacy: bool) -> dict:
                 )
             ).all()
         }
+        country_centroids = _load_country_centroids(db)
         conflicts = db.scalars(select(Conflict)).all()
         for c in conflicts:
+            # Tiered placement — best available conflict-specific geography:
+            # ① event centroid ② footprint centroid ③ curated coordinate
+            # (set by seed_conflicts) ④ country centroid, approximate
+            # display-only fallback.
             pts = coords_per_conflict.get(c.id, [])
             if pts:
                 c.lat = float(mean(p[0] for p in pts))
                 c.lng = float(mean(p[1] for p in pts))
+                c.coord_source = "event_centroid"
             elif c.id in footprint_centroids:
                 c.lat, c.lng = footprint_centroids[c.id]
+                c.coord_source = "footprint_centroid"
+            elif c.coord_source == "curated_coordinate" and c.lat is not None:
+                pass  # keep the seeded curated coordinate
+            elif c.primary_iso3 in country_centroids:
+                c.lat, c.lng = country_centroids[c.primary_iso3]
+                c.coord_source = "country_fallback"
             if c.lat is not None and c.lng is not None:
                 c.geom = f"SRID=4326;POINT({c.lng} {c.lat})"
 

@@ -88,6 +88,10 @@ class _ConflictEntry(BaseModel):
     summary: str | None = None
     wikipedia_url: str | None = None
     ucdp_conflict_id: str | None = None
+    # Curated display coordinate (fallback tier 3 — used only when no events
+    # route and no footprint centroid resolves).
+    lat: float | None = Field(default=None, ge=-90.0, le=90.0)
+    lng: float | None = Field(default=None, ge=-180.0, le=180.0)
     parties: list[_PartyRef] = Field(default_factory=list)
     footprint: list[_FootprintCell] = Field(default_factory=list)
     routing: _RoutingBlock = Field(default_factory=_RoutingBlock)
@@ -161,6 +165,8 @@ class ConflictEntry:
     parties: list[PartyLink]
     footprint: list[FootprintCell]
     routing_rules: list[RoutingRule] = field(default_factory=list)
+    lat: float | None = None
+    lng: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +330,8 @@ def load_registry(
                 parties=parties,
                 footprint=footprint,
                 routing_rules=deduped,
+                lat=c.lat,
+                lng=c.lng,
             )
         )
     return out

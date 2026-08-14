@@ -72,6 +72,10 @@ class Conflict(Base):
     geom: Mapped[object | None] = mapped_column(
         Geometry(geometry_type="POINT", srid=4326), nullable=True
     )
+    # Which fallback tier produced lat/lng: event_centroid | footprint_centroid
+    # | curated_coordinate | country_fallback. country_fallback is an
+    # approximate display-only position and must never back an `active` dot.
+    coord_source: Mapped[str | None] = mapped_column(String(20))
     summary: Mapped[str | None] = mapped_column(Text)
     wikipedia_url: Mapped[str | None] = mapped_column(String(500))
     ucdp_conflict_id: Mapped[str | None] = mapped_column(String(40))
