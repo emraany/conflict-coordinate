@@ -29,7 +29,7 @@ class CrisisEvent(Base):
     lng: Mapped[float | None] = mapped_column(Float)
     external_id: Mapped[str | None] = mapped_column(String(200), index=True)
     source_id: Mapped[int | None] = mapped_column(
-        ForeignKey("sources.id", ondelete="SET NULL")
+        ForeignKey("sources.id", ondelete="SET NULL"), index=True
     )
     # Routing target — populated during conflict-registry rebuild. NULL means
     # the event hasn't been routed yet, or no routing rule matched (orphan).
