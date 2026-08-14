@@ -29,10 +29,11 @@ const ROLE_GROUPS: Array<{ role: ActorRole; label: string; subline: string }> = 
 
 const SECTION_NAV: Array<{ id: string; num: string; label: string }> = [
   { id: "cc-glance", num: "01", label: "GLANCE" },
-  { id: "cc-who", num: "02", label: "WHO" },
-  { id: "cc-when", num: "03", label: "TIMELINE" },
-  { id: "cc-where", num: "04", label: "WHERE" },
-  { id: "cc-sources", num: "05", label: "SOURCES" },
+  { id: "cc-reports", num: "02", label: "REPORTS" },
+  { id: "cc-who", num: "03", label: "WHO" },
+  { id: "cc-when", num: "04", label: "TIMELINE" },
+  { id: "cc-where", num: "05", label: "WHERE" },
+  { id: "cc-sources", num: "06", label: "SOURCES" },
 ];
 
 function formatYmd(iso: string | null): string {
@@ -754,11 +755,102 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                 )}
               </section>
 
-              {/* 02 WHO IS INVOLVED */}
+              {/* 02 LATEST REPORTING */}
+              <section style={{ marginBottom: space.xl }}>
+                <SectionHeader
+                  id="cc-reports"
+                  num="02"
+                  stamp="LATEST REPORTING"
+                  subline="recent situation reports from humanitarian agencies on the ground"
+                  count={detail.field_reports.length}
+                />
+                {detail.field_reports.length === 0 ? (
+                  <p
+                    className="serif"
+                    style={{
+                      margin: 0,
+                      fontSize: 13,
+                      color: colors.textMuted,
+                      fontStyle: "italic",
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    No recent situation reports on file for this region.
+                  </p>
+                ) : (
+                  <ol style={{ margin: 0, padding: 0, listStyle: "none" }}>
+                    {detail.field_reports.map((r, i) => (
+                      <li
+                        key={r.id}
+                        style={{
+                          paddingBottom: space.md,
+                          marginBottom: space.md,
+                          borderBottom:
+                            i === detail.field_reports.length - 1
+                              ? "none"
+                              : `1px dashed ${colors.rule}`,
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "baseline",
+                            gap: space.sm,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <a
+                            href={r.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              color: colors.text,
+                              fontFamily: fonts.mono,
+                              fontSize: 13,
+                              flex: 1,
+                              minWidth: 0,
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {r.title}
+                          </a>
+                          <span
+                            style={{
+                              fontFamily: fonts.mono,
+                              fontSize: 10,
+                              color: colors.textMuted,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {[r.publisher, formatYmd(r.published_at)]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        </div>
+                        {r.body_text && (
+                          <p
+                            className="serif"
+                            style={{
+                              margin: `${space.xs}px 0 0 0`,
+                              fontSize: 13,
+                              lineHeight: 1.65,
+                              color: colors.textMuted,
+                            }}
+                          >
+                            {r.body_text}
+                          </p>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+
+              {/* 03 WHO IS INVOLVED */}
               <section style={{ marginBottom: space.xl }}>
                 <SectionHeader
                   id="cc-who"
-                  num="02"
+                  num="03"
                   stamp="WHO IS INVOLVED"
                   subline="the sides of the conflict, who is mediating, and who is caught in the middle"
                   count={detail.parties.length}
@@ -819,11 +911,11 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                 )}
               </section>
 
-              {/* 03 HOW IT'S UNFOLDING */}
+              {/* 04 HOW IT'S UNFOLDING */}
               <section style={{ marginBottom: space.xl }}>
                 <SectionHeader
                   id="cc-when"
-                  num="03"
+                  num="04"
                   stamp="HOW IT'S UNFOLDING"
                   subline="individual incidents routed to this conflict — sourced from ACLED and UCDP; near-real-time GDELT activity appears as the signal count above"
                   count={detail.events.length}
@@ -882,11 +974,11 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                 )}
               </section>
 
-              {/* 04 WHERE IT'S HAPPENING */}
+              {/* 05 WHERE IT'S HAPPENING */}
               <section style={{ marginBottom: space.xl }}>
                 <SectionHeader
                   id="cc-where"
-                  num="04"
+                  num="05"
                   stamp="WHERE IT'S HAPPENING"
                   subline="the admin1 regions seeing the most activity"
                   count={detail.top_admin1s.length}
@@ -894,11 +986,11 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                 <TopAdmin1List rows={detail.top_admin1s} />
               </section>
 
-              {/* 05 SOURCES */}
+              {/* 06 SOURCES */}
               <section>
                 <SectionHeader
                   id="cc-sources"
-                  num="05"
+                  num="06"
                   stamp="SOURCES"
                   subline="every claim above traces back to one of these"
                   count={detail.sources.length}

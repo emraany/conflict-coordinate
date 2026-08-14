@@ -79,6 +79,9 @@ class ConflictDetail(BaseModel):
     parties: list[ConflictPartyOut]
     events: list[CrisisEventOut]
     sources: list[SourceOut]
+    # Conflict-scoped ReliefWeb situation reports — the current-narrative
+    # section of the dossier. Empty when none are on file.
+    field_reports: list[SourceOut] = []
     stats: ConflictStats
     intensity_52w: list[IntensityWeek]
     top_admin1s: list[TopAdmin1]

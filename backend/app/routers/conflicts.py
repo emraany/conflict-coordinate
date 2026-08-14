@@ -399,6 +399,18 @@ def get_conflict(slug: str, db: Session = Depends(get_db)) -> ConflictDetail:
         SourceOut.model_validate(s)
         for s in _sources_for(db, conflict.id, cited_ids)
     ]
+    field_reports = [
+        SourceOut.model_validate(s)
+        for s in db.scalars(
+            select(Source)
+            .where(
+                Source.conflict_id == conflict.id,
+                Source.origin == "reliefweb",
+            )
+            .order_by(Source.published_at.desc().nullslast())
+            .limit(4)
+        )
+    ]
     events_out = []
     for ev, count in deduped:
         out = CrisisEventOut.model_validate(ev)
@@ -424,6 +436,7 @@ def get_conflict(slug: str, db: Session = Depends(get_db)) -> ConflictDetail:
         parties=parties,
         events=events_out,
         sources=sources,
+        field_reports=field_reports,
         stats=stats,
         intensity_52w=weeks,
         top_admin1s=_top_admin1s_for(db, conflict.id),

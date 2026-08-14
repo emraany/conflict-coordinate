@@ -299,6 +299,51 @@ def _upsert_crisis(
     return crisis, created
 
 
+def _attach_field_reports(db: Session) -> dict:
+    """Fetch recent ReliefWeb situation reports for each non-resolved
+    conflict's primary country and store them as conflict-scoped sources
+    (origin='reliefweb'). Skipped when RELIEFWEB_APPNAME is unset."""
+    from app.ingestion.reliefweb import fetch_situation_reports
+
+    if not settings.reliefweb_appname.strip():
+        return {"attached": 0}
+    conflicts = db.scalars(
+        select(Conflict).where(
+            Conflict.status != ConflictStatus.resolved,
+            Conflict.primary_iso3.is_not(None),
+        )
+    ).all()
+    cache: dict[str, list] = {}
+    attached = 0
+    for conflict in conflicts:
+        for ref in fetch_situation_reports(conflict.primary_iso3, cache):
+            existing = db.scalar(
+                select(Source).where(
+                    Source.conflict_id == conflict.id,
+                    Source.url == ref.url,
+                    Source.origin == "reliefweb",
+                )
+            )
+            if existing is not None:
+                continue
+            db.add(
+                Source(
+                    conflict_id=conflict.id,
+                    title=ref.title,
+                    url=ref.url,
+                    publisher=ref.publisher,
+                    published_at=ref.published_at,
+                    retrieved_at=datetime.now(UTC),
+                    source_type=SourceType(ref.source_type),
+                    origin="reliefweb",
+                    body_text=ref.body_text,
+                )
+            )
+            attached += 1
+    db.commit()
+    return {"attached": attached}
+
+
 def _reference_now() -> datetime:
     """Anchor for staleness windows. Falls back to wall-clock UTC when
     ACLED_REFERENCE_DATE is unset. Matches the convention used by
@@ -463,6 +508,14 @@ def run_all_sources(db: Session | None = None) -> dict:
         if demoted:
             db.commit()
         result["status_demoted"] = demoted
+
+        # ReliefWeb situation reports — the dossier's current-narrative
+        # section. Network-bound and non-critical, so it must not fail ingest.
+        try:
+            result["field_reports"] = _attach_field_reports(db)
+        except Exception as exc:
+            db.rollback()
+            result["field_reports"] = {"error": str(exc)}
 
         # Wikipedia auto-discovery runs REPORT-ONLY: it surfaces candidate
         # conflicts in the ingest result for an admin to curate into

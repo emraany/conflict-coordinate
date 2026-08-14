@@ -193,6 +193,8 @@ export interface ConflictDetail {
   parties: ConflictParty[];
   events: CrisisEvent[];
   sources: Source[];
+  /** ReliefWeb situation reports scoped to this conflict, newest first. */
+  field_reports: Source[];
   stats: ConflictStats;
   intensity_52w: IntensityWeek[];
   top_admin1s: TopAdmin1[];

@@ -30,6 +30,11 @@ class Source(Base):
     crisis_id: Mapped[int | None] = mapped_column(
         ForeignKey("crises.id", ondelete="CASCADE"), index=True
     )
+    # Conflict-scoped sources (e.g. ReliefWeb situation reports) hang off the
+    # conflict directly instead of an event's parent crisis.
+    conflict_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conflicts.id", ondelete="CASCADE"), index=True
+    )
     title: Mapped[str] = mapped_column(String(500))
     url: Mapped[str] = mapped_column(String(1000))
     publisher: Mapped[str | None] = mapped_column(String(200))
