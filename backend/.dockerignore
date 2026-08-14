@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+# Cached ACLED xlsx downloads and OAuth tokens — never bake secrets or
+# multi-MB regional dumps into the image.
+.cache/
+.env

@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -59,6 +61,9 @@ class Settings(BaseSettings):
     # (`uv run python -m app.ingestion.runner` via cron/launchd) so long
     # runs survive server restarts/reloads. Manual /api/ingest/run remains.
     ingest_schedule_time: str = Field(default="")
+    # Set true on any deployed environment. Turns the permissive local
+    # defaults below into startup errors rather than silent security holes.
+    production: bool = Field(default=False)
 
     model_config = SettingsConfigDict(
         env_file=(REPO_ROOT / ".env"),
@@ -66,6 +71,28 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @field_validator("database_url")
+    @classmethod
+    def _normalize_db_driver(cls, v: str) -> str:
+        # Hosted Postgres (Railway, Heroku, Render) injects a bare
+        # `postgresql://` URL. SQLAlchemy resolves that to psycopg2, which
+        # isn't a dependency — the app would die at import with a driver
+        # error that reads like a network problem.
+        if v.startswith("postgresql://"):
+            return v.replace("postgresql://", "postgresql+psycopg://", 1)
+        if v.startswith("postgres://"):
+            return v.replace("postgres://", "postgresql+psycopg://", 1)
+        return v
+
+    @model_validator(mode="after")
+    def _check_production_safety(self) -> Settings:
+        if self.production and self.admin_token == "change-me":
+            raise ValueError(
+                "ADMIN_TOKEN is still the default while PRODUCTION=true. "
+                "It guards every write endpoint; set it to a random secret."
+            )
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:
