@@ -272,7 +272,7 @@ function IntensitySparkline({ weeks }: { weeks: IntensityWeek[] }) {
         }}
       >
         <span>{first ?? "—"}</span>
-        <span>WEEKLY EVENT COUNT — ACLED AGGREGATES</span>
+        <span>WEEKLY EVENT COUNT — ALL ROUTED SOURCES</span>
         <span>{last ?? "—"}</span>
       </div>
     </div>
@@ -684,6 +684,23 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                     value={detail.stats.total_events.toLocaleString()}
                   />
                 </div>
+                {detail.stats.gdelt_7d_reports > 0 && (
+                  <div
+                    style={{
+                      fontFamily: fonts.mono,
+                      fontSize: 11,
+                      color: colors.oliveLight,
+                      letterSpacing: "0.06em",
+                      marginBottom: space.md,
+                    }}
+                    title="Machine-coded event reports from the GDELT stream — a freshness signal, not verified incident records"
+                  >
+                    ▸ {detail.stats.gdelt_7d_reports.toLocaleString()} violent-event
+                    report{detail.stats.gdelt_7d_reports === 1 ? "" : "s"} in the
+                    last 7 days
+                    <span style={{ color: colors.textDim }}> · GDELT signal</span>
+                  </div>
+                )}
                 {detail.intensity_52w.length > 0 && (
                   <>
                     <IntensitySparkline weeks={detail.intensity_52w} />
@@ -808,7 +825,7 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                   id="cc-when"
                   num="03"
                   stamp="HOW IT'S UNFOLDING"
-                  subline="individual incidents routed to this conflict — sourced from ACLED, UCDP, and GDELT"
+                  subline="individual incidents routed to this conflict — sourced from ACLED and UCDP; near-real-time GDELT activity appears as the signal count above"
                   count={detail.events.length}
                 />
                 {detail.events.length === 0 ? (

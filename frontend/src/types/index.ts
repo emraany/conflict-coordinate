@@ -57,6 +57,8 @@ export interface CrisisEvent {
   lng: number | null;
   source_id: number | null;
   created_at: string;
+  /** How many raw records (cross-source twins) this displayed row stands for. */
+  report_count: number;
 }
 
 export interface CrisisListItem {
@@ -162,6 +164,8 @@ export interface ConflictStats {
   last_event_at: string | null;
   recent_4w_events: number;
   recent_4w_fatalities: number;
+  /** Machine-coded GDELT reports routed here in the last 7 days. */
+  gdelt_7d_reports: number;
 }
 
 export interface TopAdmin1 {

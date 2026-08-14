@@ -158,6 +158,74 @@ def _compute_stats(
     )
 
 
+def _dedupe_events_for_display(
+    events: list[CrisisEvent], limit: int = 50
+) -> list[tuple[CrisisEvent, int]]:
+    """Presentation-only dedup of the dossier timeline — DB rows are never
+    merged and stats still count every record. Two collapse rules:
+
+      - identical (day, description) rows fold into one, counted
+      - same-day rows within ~0.1° from *different* feeds fold into the row
+        with the richest description (ACLED prose beats a UCDP headline);
+        same-feed rows at the same spot stay separate — they are distinct
+        incidents, not double reporting
+
+    Returns (event, report_count) newest-first, capped at `limit`."""
+
+    def _day(ev: CrisisEvent):
+        return ev.occurred_at.date()
+
+    def _feed(ev: CrisisEvent) -> str:
+        return (ev.external_id or "").split(":", 1)[0]
+
+    # Rank richer rows first within each day so a bucket keeps its best row.
+    ranked = sorted(
+        events, key=lambda e: (_day(e), len(e.description or "")), reverse=True
+    )
+    kept: list[list] = []  # [event, count]
+    by_desc: dict[tuple, int] = {}
+    by_loc: dict[tuple, list[int]] = {}
+    for ev in ranked:
+        desc_key = (_day(ev), (ev.description or "").strip())
+        target = by_desc.get(desc_key)
+        loc_key = None
+        if target is None and ev.lat is not None and ev.lng is not None:
+            loc_key = (_day(ev), round(ev.lat, 1), round(ev.lng, 1))
+            for idx in by_loc.get(loc_key, []):
+                if _feed(kept[idx][0]) != _feed(ev):
+                    target = idx
+                    break
+        if target is not None:
+            kept[target][1] += 1
+            continue
+        kept.append([ev, 1])
+        idx = len(kept) - 1
+        by_desc[desc_key] = idx
+        if ev.lat is not None and ev.lng is not None:
+            loc_key = loc_key or (_day(ev), round(ev.lat, 1), round(ev.lng, 1))
+            by_loc.setdefault(loc_key, []).append(idx)
+    kept.sort(key=lambda t: t[0].occurred_at, reverse=True)
+    return [(ev, count) for ev, count in kept[:limit]]
+
+
+def _gdelt_7d_reports(db: Session, conflict_id: int) -> int:
+    """Routed GDELT records in the last 7 days — the freshness signal shown
+    in GLANCE (GDELT rows are excluded from the prose timeline)."""
+    from datetime import UTC, datetime, timedelta
+
+    cutoff = datetime.now(UTC) - timedelta(days=7)
+    return int(
+        db.scalar(
+            select(func.count()).where(
+                CrisisEvent.conflict_id == conflict_id,
+                CrisisEvent.external_id.like("gdelt:%"),
+                CrisisEvent.occurred_at >= cutoff,
+            )
+        )
+        or 0
+    )
+
+
 def _top_admin1s_for(db: Session, conflict_id: int, limit: int = 8) -> list[TopAdmin1]:
     """Top admin1 cells in this conflict, ranked by event count.
 
@@ -277,15 +345,23 @@ def get_conflict(slug: str, db: Session = Depends(get_db)) -> ConflictDetail:
     if conflict is None:
         raise HTTPException(status_code=404, detail="Conflict not found")
 
-    # Most recent 50 events for the dossier timeline.
-    recent_events = list(
+    # Dossier timeline: recent events WITH prose only (GDELT rows have no
+    # description — they feed stats and the 7-day signal instead). Fetch a
+    # wider window, then presentation-dedupe down to 50.
+    timeline_rows = list(
         db.scalars(
             select(CrisisEvent)
-            .where(CrisisEvent.conflict_id == conflict.id)
+            .where(
+                CrisisEvent.conflict_id == conflict.id,
+                CrisisEvent.description.is_not(None),
+                CrisisEvent.occurred_at.is_not(None),
+            )
             .order_by(CrisisEvent.occurred_at.desc())
-            .limit(50)
+            .limit(150)
         )
     )
+    deduped = _dedupe_events_for_display(timeline_rows)
+    recent_events = [ev for ev, _count in deduped]
 
     # Stats: total counts come from the conflict-scoped query, NOT just the
     # 50-event window we hand the timeline.
@@ -307,6 +383,7 @@ def get_conflict(slug: str, db: Session = Depends(get_db)) -> ConflictDetail:
     stats.total_fatalities = counts[1]
     stats.first_event_at = bounds.first_at
     stats.last_event_at = bounds.last_at
+    stats.gdelt_7d_reports = _gdelt_7d_reports(db, conflict.id)
 
     parties = [
         ConflictPartyOut(
@@ -322,7 +399,11 @@ def get_conflict(slug: str, db: Session = Depends(get_db)) -> ConflictDetail:
         SourceOut.model_validate(s)
         for s in _sources_for(db, conflict.id, cited_ids)
     ]
-    events_out = [CrisisEventOut.model_validate(e) for e in recent_events]
+    events_out = []
+    for ev, count in deduped:
+        out = CrisisEventOut.model_validate(ev)
+        out.report_count = count
+        events_out.append(out)
 
     return ConflictDetail(
         id=conflict.id,

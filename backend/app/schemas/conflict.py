@@ -27,6 +27,9 @@ class ConflictStats(BaseModel):
     last_event_at: datetime | None
     recent_4w_events: int = 0
     recent_4w_fatalities: int = 0
+    # Machine-coded GDELT reports routed here in the last 7 days — a
+    # freshness signal, not incident records (GDELT rows carry no prose).
+    gdelt_7d_reports: int = 0
 
 
 class TopAdmin1(BaseModel):

@@ -183,6 +183,18 @@ export function EventTimeline({ events, sourceIndex }: Props) {
                     † {fatalities}
                   </span>
                 )}
+                {(ev.report_count ?? 1) > 1 && (
+                  <span
+                    style={{
+                      fontFamily: fonts.mono,
+                      fontSize: 10,
+                      color: colors.textMuted,
+                    }}
+                    title="independent records collapsed into this entry (cross-source reports of the same incident)"
+                  >
+                    ×{ev.report_count} reports
+                  </span>
+                )}
               </div>
               {description ? (
                 <p

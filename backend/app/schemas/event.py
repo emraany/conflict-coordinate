@@ -17,3 +17,6 @@ class CrisisEventOut(BaseModel):
     lng: float | None
     source_id: int | None
     created_at: datetime
+    # Presentation-only: how many raw records (cross-source twins, repeated
+    # headlines) this displayed row stands for. DB rows are never merged.
+    report_count: int = 1
