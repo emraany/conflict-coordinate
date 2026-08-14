@@ -2,17 +2,14 @@ import { useEffect, useState } from "react";
 
 import { api } from "../api/client";
 import { Brief } from "../components/Brief";
-import { ConflictDetailPanel } from "../components/ConflictDetailPanel";
-import { Globe } from "../components/Globe";
-import { colors, fonts, space, statusColor } from "../styles/tokens";
-import type { ConflictListItem, ConflictStatus } from "../types";
+import { CrisisDetailPanel } from "../components/CrisisDetailPanel";
+import { Globe, lethalityColor } from "../components/Globe";
+import { colors, fonts, space } from "../styles/tokens";
+import type { GlobeDot } from "../types";
 
-function Legend() {
-  const rows: { label: string; status: ConflictStatus }[] = [
-    { label: "ACTIVE", status: "active" },
-    { label: "FROZEN", status: "frozen" },
-    { label: "EMERGING", status: "emerging" },
-  ];
+function Legend({ latestWeek }: { latestWeek: string | null }) {
+  // Ramp samples match lethalityColor(fatalities) in Globe.tsx.
+  const ramp = [0, 5, 25, 120, 600];
   return (
     <div
       style={{
@@ -24,65 +21,92 @@ function Legend() {
         padding: `${space.sm}px ${space.md}px`,
         fontFamily: fonts.mono,
         fontSize: 11,
+        maxWidth: 300,
       }}
     >
       <div
         className="label"
-        style={{ fontSize: 10, color: colors.textMuted, marginBottom: 4 }}
+        style={{ fontSize: 10, color: colors.textMuted, marginBottom: 6 }}
       >
-        LEGEND
+        REPORTED DEATHS · 4 WEEKS
       </div>
-      {rows.map((r) => (
-        <div
-          key={r.status}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: space.sm,
-            padding: "2px 0",
-          }}
-        >
+      <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+        {ramp.map((f) => (
           <span
+            key={f}
             style={{
-              width: 10,
+              width: 26,
               height: 10,
-              background: statusColor(r.status),
+              background: lethalityColor(f),
               display: "inline-block",
-              borderRadius: "50%",
             }}
           />
-          <span style={{ color: colors.textMuted, letterSpacing: "0.12em" }}>
-            {r.label}
-          </span>
-        </div>
-      ))}
+        ))}
+      </div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          color: colors.textDim,
+          fontSize: 9,
+          letterSpacing: "0.1em",
+          marginTop: 3,
+        }}
+      >
+        <span>NONE</span>
+        <span>MANY</span>
+      </div>
+      <div
+        style={{
+          fontSize: 9,
+          color: colors.textDim,
+          lineHeight: 1.5,
+          marginTop: 6,
+          letterSpacing: "0.04em",
+        }}
+      >
+        Dot size = recorded events. Each dot is one admin1 region with armed
+        violence or riots in the four weeks to{" "}
+        <span style={{ color: colors.textMuted }}>{latestWeek ?? "—"}</span>,
+        per ACLED weekly aggregates (published ~1–2 weeks behind).
+      </div>
     </div>
   );
 }
 
 export function MapPage() {
-  const [conflicts, setConflicts] = useState<ConflictListItem[]>([]);
+  const [dots, setDots] = useState<GlobeDot[]>([]);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api
-      .listConflicts()
-      .then(setConflicts)
+      .listGlobeDots()
+      .then(setDots)
       .catch(() => setError("Unable to reach API"));
   }, []);
 
-  const activeCount = conflicts.filter((c) => c.status === "active").length;
+  const namedCount = dots.filter((d) => d.conflict !== null).length;
+  const latestWeek = dots.reduce<string | null>(
+    (max, d) =>
+      d.latest_week && (max === null || d.latest_week > max) ? d.latest_week : max,
+    null,
+  );
 
   return (
     <Brief
       section="globe"
       rightMeta={
         <>
-          <span style={{ color: colors.textMuted }}>
-            {conflicts.length} conflicts
+          <span style={{ color: colors.active }}>
+            {dots.length} active regions
           </span>
-          <span style={{ color: colors.active }}>{activeCount} active</span>
+          <span style={{ color: colors.textMuted }}>
+            {namedCount} in named conflicts
+          </span>
+          <span style={{ color: colors.textMuted }}>
+            week of {latestWeek ?? "—"}
+          </span>
           <a
             href="/admin"
             style={{ color: colors.textMuted, textDecoration: "none" }}
@@ -102,11 +126,11 @@ export function MapPage() {
       >
         <div style={{ flex: 1, position: "relative", minWidth: 0 }}>
           <Globe
-            conflicts={conflicts}
+            dots={dots}
             onSelect={setSelectedSlug}
             selectedSlug={selectedSlug}
           />
-          <Legend />
+          <Legend latestWeek={latestWeek} />
           {error && (
             <div
               style={{
@@ -136,7 +160,7 @@ export function MapPage() {
               minHeight: 0,
             }}
           >
-            <ConflictDetailPanel
+            <CrisisDetailPanel
               slug={selectedSlug}
               onClose={() => setSelectedSlug(null)}
             />

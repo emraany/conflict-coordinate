@@ -61,6 +61,31 @@ export interface CrisisEvent {
   report_count: number;
 }
 
+export interface ConflictLabel {
+  slug: string;
+  name: string;
+}
+
+/**
+ * One admin1 region with current violent activity — the globe's dot layer.
+ * Counts are a trailing-4-week rollup of ACLED weekly aggregates ending at
+ * `latest_week` (real-time data, typically 1-2 weeks behind publication).
+ */
+export interface GlobeDot {
+  slug: string;
+  name: string;
+  country: string | null;
+  country_iso3: string | null;
+  admin1: string | null;
+  lat: number;
+  lng: number;
+  events_4w: number;
+  fatalities_4w: number;
+  population_exposure: number | null;
+  latest_week: string | null;
+  conflict: ConflictLabel | null;
+}
+
 export interface CrisisListItem {
   id: number;
   slug: string;

@@ -12,6 +12,7 @@ import type {
   CrisisEntities,
   CrisisGraph,
   CrisisListItem,
+  GlobeDot,
   IngestSummary,
   RoutingRule,
   RoutingRuleType,
@@ -52,6 +53,7 @@ async function request<T>(
 }
 
 export const api = {
+  listGlobeDots: () => request<GlobeDot[]>("/api/globe"),
   listConflicts: () => request<ConflictListItem[]>("/api/conflicts"),
   getConflict: (slug: string) =>
     request<ConflictDetail>(`/api/conflicts/${slug}`),

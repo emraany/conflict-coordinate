@@ -2,20 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GlobeGL from "react-globe.gl";
 import type { GlobeMethods } from "react-globe.gl";
 
-import { colors, fonts, space, statusColor } from "../styles/tokens";
-import type { ConflictListItem } from "../types";
+import { colors, fonts, space } from "../styles/tokens";
+import type { GlobeDot } from "../types";
 
 interface Props {
-  conflicts: ConflictListItem[];
+  dots: GlobeDot[];
   onSelect: (slug: string) => void;
   selectedSlug: string | null;
 }
 
-// Conflicts with no centroid yet (no events routed, no footprint cells with
-// known coords) are filtered out of the dot layer.
-type PlacedConflict = ConflictListItem & { lat: number; lng: number };
-
-interface PointDatum extends PlacedConflict {
+interface PointDatum extends GlobeDot {
   __color: string;
 }
 
@@ -42,6 +38,11 @@ function dotRadius(eventCount: number): number {
   return 0.22 + 0.09 * Math.log1p(eventCount);
 }
 
+function formatWeek(iso: string | null): string {
+  if (!iso) return "—";
+  return iso.slice(0, 10);
+}
+
 function lerpHex(from: [number, number, number], to: [number, number, number], t: number): string {
   const r = Math.round(from[0] + (to[0] - from[0]) * t);
   const g = Math.round(from[1] + (to[1] - from[1]) * t);
@@ -56,6 +57,12 @@ const ACTIVE_RGB: [number, number, number] = [0xa6, 0x4a, 0x3a];
 function intensityColor(weight: number): string {
   const t = Math.min(1, Math.log1p(weight) / 8);
   return lerpHex(OLIVE_RGB, ACTIVE_RGB, t);
+}
+
+// Every dot is current by construction, so colour carries lethality rather
+// than status: olive = activity without reported deaths, red = high fatalities.
+export function lethalityColor(fatalities: number): string {
+  return intensityColor(fatalities);
 }
 
 function readLocal<T extends string>(key: string, fallback: T): T {
@@ -191,14 +198,7 @@ function GlobeControlChips({
   );
 }
 
-export function Globe({ conflicts, onSelect, selectedSlug }: Props) {
-  const placedConflicts: PlacedConflict[] = useMemo(
-    () =>
-      conflicts.filter(
-        (c): c is PlacedConflict => c.lat !== null && c.lng !== null,
-      ),
-    [conflicts],
-  );
+export function Globe({ dots, onSelect, selectedSlug }: Props) {
   const ref = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const monoDataUrlRef = useRef<string | null>(null);
@@ -221,18 +221,8 @@ export function Globe({ conflicts, onSelect, selectedSlug }: Props) {
 
   const points: PointDatum[] = useMemo(
     () =>
-      placedConflicts.map((c) => {
-        const base = statusColor(c.status);
-        // Frozen + emerging dots render at ~50% opacity ("dormant"/"unconfirmed").
-        // #RRGGBBAA where AA=80 is exactly 50%.
-        const color =
-          c.status === "frozen" || c.status === "emerging" ? `${base}80` : base;
-        return {
-          ...c,
-          __color: color,
-        };
-      }),
-    [placedConflicts],
+      dots.map((d) => ({ ...d, __color: lethalityColor(d.fatalities_4w) })),
+    [dots],
   );
 
   const displayedCountries = useMemo<object[]>(
@@ -240,19 +230,20 @@ export function Globe({ conflicts, onSelect, selectedSlug }: Props) {
     [showBorders, countriesGeo],
   );
 
-  const rings: RingDatum[] = useMemo(
-    () =>
-      placedConflicts
-        .filter((c) => c.status === "active")
-        .map((c) => ({
-          lat: c.lat,
-          lng: c.lng,
-          maxRadius: 4,
-          propagationSpeed: 2,
-          repeatPeriod: 2000,
-        })),
-    [placedConflicts],
-  );
+  // Pulse only the most lethal regions — every dot is current, so a ring on
+  // each would be noise rather than signal.
+  const rings: RingDatum[] = useMemo(() => {
+    const threshold = 25;
+    return dots
+      .filter((d) => d.fatalities_4w >= threshold)
+      .map((d) => ({
+        lat: d.lat,
+        lng: d.lng,
+        maxRadius: 4,
+        propagationSpeed: 2,
+        repeatPeriod: 2000,
+      }));
+  }, [dots]);
 
   // Track container size so the globe canvas matches its parent (not the window).
   useEffect(() => {
@@ -317,10 +308,10 @@ export function Globe({ conflicts, onSelect, selectedSlug }: Props) {
   useEffect(() => {
     const g = ref.current;
     if (!g || !selectedSlug) return;
-    const target = placedConflicts.find((c) => c.slug === selectedSlug);
+    const target = dots.find((d) => d.slug === selectedSlug);
     if (!target) return;
     g.pointOfView({ lat: target.lat, lng: target.lng, altitude: 1.6 }, 900);
-  }, [selectedSlug, placedConflicts]);
+  }, [selectedSlug, dots]);
 
   // Switch texture by updating the globeImageUrl prop.
   useEffect(() => {
@@ -381,7 +372,7 @@ export function Globe({ conflicts, onSelect, selectedSlug }: Props) {
         pointLng={(d) => (d as PointDatum).lng}
         pointColor={(d) => (d as PointDatum).__color}
         pointAltitude={0.006}
-        pointRadius={(d) => dotRadius((d as PointDatum).event_count)}
+        pointRadius={(d) => dotRadius((d as PointDatum).events_4w)}
         pointsMerge={false}
         pointLabel={(d) => {
           const p = d as PointDatum;
@@ -394,9 +385,9 @@ export function Globe({ conflicts, onSelect, selectedSlug }: Props) {
             font-size: 11px;
             letter-spacing: 0.08em;
           ">
-            <div style="color:${p.__color};font-size:10px;letter-spacing:0.2em;">[ ${p.status.toUpperCase()} ]</div>
+            <div style="color:${p.__color};font-size:10px;letter-spacing:0.2em;">[ ${p.conflict ? p.conflict.name.toUpperCase() : "NO NAMED CONFLICT"} ]</div>
             <div style="margin-top:2px;">${p.name}</div>
-            <div style="color:${colors.textMuted};font-size:10px;margin-top:2px;">${p.primary_iso3 ?? ""} · ${p.event_count} events${p.total_fatalities > 0 ? ` · † ${p.total_fatalities}` : ""}</div>
+            <div style="color:${colors.textMuted};font-size:10px;margin-top:2px;">${p.events_4w} events${p.fatalities_4w > 0 ? ` · † ${p.fatalities_4w}` : ""} · 4 wks to ${formatWeek(p.latest_week)}</div>
           </div>`;
         }}
         onPointClick={(p) => onSelect((p as PointDatum).slug)}
@@ -411,7 +402,7 @@ export function Globe({ conflicts, onSelect, selectedSlug }: Props) {
         hexBinPointsData={viewMode === "hex" ? points : []}
         hexBinPointLat={(d: object) => (d as PointDatum).lat}
         hexBinPointLng={(d: object) => (d as PointDatum).lng}
-        hexBinPointWeight={(d: object) => Math.max(1, (d as PointDatum).event_count)}
+        hexBinPointWeight={(d: object) => Math.max(1, (d as PointDatum).events_4w)}
         hexBinResolution={3}
         hexMargin={0.2}
         hexAltitude={(d: { sumWeight: number }) =>
@@ -424,7 +415,7 @@ export function Globe({ conflicts, onSelect, selectedSlug }: Props) {
           const n = d.points.length;
           const topNames = d.points
             .slice()
-            .sort((a, b) => b.event_count - a.event_count)
+            .sort((a, b) => b.events_4w - a.events_4w)
             .slice(0, 3)
             .map((p) => p.name);
           return `<div style="
@@ -436,7 +427,7 @@ export function Globe({ conflicts, onSelect, selectedSlug }: Props) {
             font-size:11px;
           ">
             <div style="color:${colors.oliveLight};font-size:10px;letter-spacing:0.2em;">[ CLUSTER ]</div>
-            <div style="margin-top:2px;">${n} CRISIS${n !== 1 ? "ES" : ""} · ${total} EVENTS</div>
+            <div style="margin-top:2px;">${n} REGION${n !== 1 ? "S" : ""} · ${total} EVENTS</div>
             <div style="color:${colors.textMuted};font-size:10px;margin-top:3px;">${topNames.join("<br/>")}</div>
           </div>`;
         }}
