@@ -1,11 +1,23 @@
 from __future__ import annotations
 
 import enum
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 from geoalchemy2 import Geometry
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Index, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -54,6 +66,17 @@ class Crisis(Base):
     intensity_last_week_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     external_id: Mapped[str | None] = mapped_column(String(200), index=True)
     source_name: Mapped[str | None] = mapped_column(String(80), index=True)
+    # Trailing-4-week rollup of ACLED weekly aggregates, restricted to violent
+    # event types. This is the globe's dot layer — refreshed once per ingest
+    # by `app.ingestion.runner._refresh_crisis_activity_rollups`.
+    violence_4w_events: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False, index=True
+    )
+    violence_4w_fatalities: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
+    violence_4w_pop_exposure: Mapped[int | None] = mapped_column(Integer)
+    latest_agg_week: Mapped[date | None] = mapped_column(Date)
     country_iso3: Mapped[str | None] = mapped_column(String(3), index=True)
     admin1: Mapped[str | None] = mapped_column(String(120))
     admin1_norm: Mapped[str | None] = mapped_column(String(120))

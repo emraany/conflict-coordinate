@@ -8,6 +8,7 @@ from app.routers import (
     admin_conflicts,
     conflicts,
     crises,
+    globe,
     ingest,
     sources,
 )
@@ -31,6 +32,7 @@ app.add_middleware(
 
 app.include_router(crises.router)
 app.include_router(conflicts.router)
+app.include_router(globe.router)
 app.include_router(admin_conflicts.router)
 app.include_router(actors.router)
 app.include_router(sources.router)

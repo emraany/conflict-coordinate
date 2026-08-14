@@ -44,6 +44,9 @@ class Source(Base):
         Enum(SourceType, name="source_type"), default=SourceType.news
     )
     origin: Mapped[str | None] = mapped_column(String(40), index=True)
+    # Country scope for material that belongs to a place rather than one
+    # crisis or conflict (ReliefWeb situation reports).
+    country_iso3: Mapped[str | None] = mapped_column(String(3), index=True)
     body_text: Mapped[str | None] = mapped_column(Text)
 
     created_at: Mapped[datetime] = mapped_column(

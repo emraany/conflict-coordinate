@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -51,6 +51,22 @@ from app.models.event import CrisisEvent
 # Cap the per-run NER pass so a large description backlog can't stall the
 # ingest cycle; the remainder drains on subsequent runs.
 NER_MAX_EVENTS_PER_RUN = 5000
+
+# --- Globe dot definition ---------------------------------------------------
+# A dot is an admin1 region with recent violent activity in ACLED's weekly
+# aggregates. Protests and strategic developments are excluded: they are
+# recorded activity, not armed conflict, and would light up stable countries.
+VIOLENT_EVENT_TYPES: tuple[str, ...] = (
+    "Battles",
+    "Violence against civilians",
+    "Explosions/Remote violence",
+    "Riots",
+)
+# Trailing window and thresholds. Tuning these changes the globe's density:
+# >=5/>=5 yields ~350 dots, >=3/>=3 ~470, any activity ~844.
+DOT_WINDOW_WEEKS = 4
+DOT_MIN_EVENTS = 5
+DOT_MIN_FATALITIES = 5
 
 SOURCES: list[IngestionSource] = [
     FixtureSource(),
@@ -299,6 +315,77 @@ def _upsert_crisis(
     return crisis, created
 
 
+def _refresh_crisis_activity_rollups(db: Session) -> dict:
+    """Recompute each crisis's trailing-4-week violent-activity rollup from
+    the ACLED weekly aggregates. This is what the globe reads.
+
+    The window is anchored on the newest week present in the aggregate data,
+    never wall-clock now: ACLED publishes weekly and lands ~1-2 weeks behind,
+    so a wall-clock window would silently empty the globe between releases.
+    Crises with no qualifying activity are zeroed so aged-out dots disappear.
+    """
+    types_sql = ", ".join(f"'{t}'" for t in VIOLENT_EVENT_TYPES)
+    result = db.execute(
+        text(
+            f"""
+            WITH latest AS (
+                SELECT max(week_start) AS w FROM crisis_intensity_weekly
+            ),
+            agg AS (
+                SELECT w.crisis_id,
+                       sum(w.event_count) AS ev,
+                       sum(w.fatalities) AS fat,
+                       max(w.population_exposure) AS pop,
+                       max(w.week_start) AS last_week
+                FROM crisis_intensity_weekly w, latest
+                WHERE w.week_start > latest.w - make_interval(weeks => :weeks)
+                  AND w.event_type IN ({types_sql})
+                GROUP BY w.crisis_id
+            )
+            UPDATE crises c
+            SET violence_4w_events = coalesce(agg.ev, 0),
+                violence_4w_fatalities = coalesce(agg.fat, 0),
+                violence_4w_pop_exposure = agg.pop,
+                latest_agg_week = agg.last_week
+            FROM agg
+            WHERE c.id = agg.crisis_id
+            """
+        ),
+        {"weeks": DOT_WINDOW_WEEKS},
+    )
+    updated = result.rowcount or 0
+    # Zero out crises that had no qualifying activity in the window.
+    db.execute(
+        text(
+            """
+            UPDATE crises c
+            SET violence_4w_events = 0,
+                violence_4w_fatalities = 0,
+                violence_4w_pop_exposure = NULL
+            WHERE (c.violence_4w_events > 0 OR c.violence_4w_fatalities > 0)
+              AND NOT EXISTS (
+                  SELECT 1 FROM crisis_intensity_weekly w, (
+                      SELECT max(week_start) AS w FROM crisis_intensity_weekly
+                  ) latest
+                  WHERE w.crisis_id = c.id
+                    AND w.week_start > latest.w - make_interval(weeks => :weeks)
+              )
+            """
+        ),
+        {"weeks": DOT_WINDOW_WEEKS},
+    )
+    db.commit()
+    dots = db.scalar(
+        select(func.count())
+        .select_from(Crisis)
+        .where(
+            (Crisis.violence_4w_events >= DOT_MIN_EVENTS)
+            | (Crisis.violence_4w_fatalities >= DOT_MIN_FATALITIES)
+        )
+    )
+    return {"crises_updated": updated, "dots": int(dots or 0)}
+
+
 def _attach_field_reports(db: Session) -> dict:
     """Fetch recent ReliefWeb situation reports for each non-resolved
     conflict's primary country and store them as conflict-scoped sources
@@ -477,6 +564,10 @@ def run_all_sources(db: Session | None = None) -> dict:
             result["sources"].append(entry)
             result["total_inserted"] += inserted
             result["total_updated"] += updated
+
+        # Refresh the globe's dot layer from the freshly-ingested aggregates
+        # before anything else in the tail — this is what the map reads.
+        result["dot_rollups"] = _refresh_crisis_activity_rollups(db)
 
         # Route + roll up FIRST — this is the load-bearing tail step, so it
         # runs before anything slow or network-bound can kill the run.
