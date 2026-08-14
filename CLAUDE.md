@@ -10,6 +10,16 @@ Neutral platform that visualizes active global conflicts on an interactive 3D gl
 - **Admin auth:** single `ADMIN_TOKEN` env var, sent as `X-Admin-Token` header
 - **Ingestion:** pluggable `IngestionSource` ABC. Sources: `FixtureSource` (seed data), `ACLEDSource` (real OAuth + event aggregation), `GDELTSource` (supplementary event stream, attach-only), `UCDPSource` (Uppsala GED, attach-only).
 
+## What a dot is
+
+A globe dot is **one admin1 region with current violent activity** — not a curated conflict. Dots come from `GET /api/globe`, backed by `crises.violence_4w_*`: a trailing-4-week rollup of ACLED's *weekly aggregates*, which carry no embargo and publish ~1–2 weeks behind. The rollup refreshes each ingest (`_refresh_crisis_activity_rollups`), anchored on the newest aggregate week rather than wall-clock time.
+
+Qualifying activity is Battles, Violence against civilians, Explosions/Remote violence, and Riots (constants in `app/ingestion/runner.py`); protests and strategic developments are excluded so stable countries don't light up. Threshold is ≥5 events or ≥5 deaths.
+
+`registry.yaml` conflicts are now a **naming layer**, not the dot layer: a region shows its conflict's name and parties when `route_event` matches it, and honestly shows none otherwise (most criminal violence is unnamed).
+
+**Two data layers, never conflated in the UI:** current counts come from real-time aggregates; individual incident prose is an *archive* (ACLED embargoes event-level data ~12 months on the Research tier; UCDP publishes a month or two behind). ReliefWeb situation reports, stored per country, are the only current narrative.
+
 ## Repo layout
 
 ```

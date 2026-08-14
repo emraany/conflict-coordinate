@@ -387,26 +387,38 @@ def _refresh_crisis_activity_rollups(db: Session) -> dict:
 
 
 def _attach_field_reports(db: Session) -> dict:
-    """Fetch recent ReliefWeb situation reports for each non-resolved
-    conflict's primary country and store them as conflict-scoped sources
-    (origin='reliefweb'). Skipped when RELIEFWEB_APPNAME is unset."""
+    """Fetch recent ReliefWeb situation reports for every country that has a
+    dot on the globe, stored once per (country, url) as country-scoped
+    sources (origin='reliefweb').
+
+    Country-scoped rather than conflict-scoped: a situation report covers a
+    place, and every region dot in that country should be able to show it —
+    not just the handful of regions a named conflict claims. Skipped when
+    RELIEFWEB_APPNAME is unset.
+    """
     from app.ingestion.reliefweb import fetch_situation_reports
 
     if not settings.reliefweb_appname.strip():
         return {"attached": 0}
-    conflicts = db.scalars(
-        select(Conflict).where(
-            Conflict.status != ConflictStatus.resolved,
-            Conflict.primary_iso3.is_not(None),
-        )
-    ).all()
+    iso3s = [
+        row[0]
+        for row in db.execute(
+            select(Crisis.country_iso3)
+            .where(
+                Crisis.country_iso3.is_not(None),
+                (Crisis.violence_4w_events >= DOT_MIN_EVENTS)
+                | (Crisis.violence_4w_fatalities >= DOT_MIN_FATALITIES),
+            )
+            .distinct()
+        ).all()
+    ]
     cache: dict[str, list] = {}
     attached = 0
-    for conflict in conflicts:
-        for ref in fetch_situation_reports(conflict.primary_iso3, cache):
+    for iso3 in iso3s:
+        for ref in fetch_situation_reports(iso3, cache):
             existing = db.scalar(
                 select(Source).where(
-                    Source.conflict_id == conflict.id,
+                    Source.country_iso3 == iso3,
                     Source.url == ref.url,
                     Source.origin == "reliefweb",
                 )
@@ -415,7 +427,7 @@ def _attach_field_reports(db: Session) -> dict:
                 continue
             db.add(
                 Source(
-                    conflict_id=conflict.id,
+                    country_iso3=iso3,
                     title=ref.title,
                     url=ref.url,
                     publisher=ref.publisher,
@@ -428,7 +440,7 @@ def _attach_field_reports(db: Session) -> dict:
             )
             attached += 1
     db.commit()
-    return {"attached": attached}
+    return {"attached": attached, "countries": len(iso3s)}
 
 
 def _reference_now() -> datetime:
