@@ -226,7 +226,7 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
     readLocal<TextureMode>(LS_TEXTURE, "color"),
   );
   const [autoRotate, setAutoRotate] = useState<boolean>(
-    () => readLocal(LS_AUTOROTATE, "false") === "true",
+    () => readLocal<string>(LS_AUTOROTATE, "false") === "true",
   );
   const [showBorders, setShowBorders] = useState<boolean>(
     () => readLocal(LS_BORDERS, "true") === "true",
@@ -287,7 +287,7 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
   useEffect(() => {
     const g = ref.current;
     if (!g) return;
-    const c = g.controls() as Record<string, unknown>;
+    const c = g.controls() as unknown as Record<string, unknown>;
     c.enablePan = true;
     c.enableDamping = true;
     c.dampingFactor = 0.12;
@@ -306,7 +306,7 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
   useEffect(() => {
     const g = ref.current;
     if (!g) return;
-    const c = g.controls() as Record<string, unknown>;
+    const c = g.controls() as unknown as Record<string, unknown>;
     c.autoRotate = autoRotate;
     c.autoRotateSpeed = 0.25;
     window.localStorage.setItem(LS_AUTOROTATE, String(autoRotate));
@@ -435,10 +435,11 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
         }
         hexTopColor={(d: { sumWeight: number }) => intensityColor(d.sumWeight)}
         hexSideColor={(d: { sumWeight: number }) => intensityColor(d.sumWeight)}
-        hexLabel={(d: { points: PointDatum[]; sumWeight: number }) => {
+        hexLabel={(d: { points: object[]; sumWeight: number }) => {
           const total = Math.round(d.sumWeight);
-          const n = d.points.length;
-          const topNames = d.points
+          const binned = d.points as PointDatum[];
+          const n = binned.length;
+          const topNames = binned
             .slice()
             .sort((a, b) => b.events_4w - a.events_4w)
             .slice(0, 3)

@@ -883,7 +883,6 @@ function AdminConflictsBody() {
 
   return (
     <Brief
-      section="admin"
       rightMeta={
         <>
           <a href="/admin" style={{ color: colors.textMuted, textDecoration: "none" }}>

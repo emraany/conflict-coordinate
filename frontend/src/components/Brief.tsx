@@ -1,4 +1,7 @@
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { api } from "../api/client";
+import type { HealthStatus } from "../types";
 import { navigate } from "../utils/navigate";
 import { colors, fonts, space } from "../styles/tokens";
 
@@ -24,10 +27,36 @@ interface Props {
   section?: Section;
 }
 
+/** How long since the pipeline last succeeded — the only honest freshness claim. */
+function ingestStamp(health: HealthStatus | null, unreachable: boolean): string {
+  if (unreachable) return "API UNREACHABLE";
+  if (!health) return "…";
+  const days = health.days_since_successful_ingest;
+  if (days === null) return "NO RUN ON RECORD";
+  if (days === 0) return "TODAY";
+  if (days === 1) return "1 DAY AGO";
+  return `${days} DAYS AGO`;
+}
+
 export function Brief({ children, rightMeta, section }: Props) {
-  const now = new Date();
-  const dateStamp =
-    now.toISOString().replace("T", " ").slice(0, 16).toUpperCase() + " UTC";
+  // Data currency, not wall-clock time. The footer used to stamp the
+  // browser's own clock, which tracked nothing: a pipeline stalled for a
+  // month still rendered a stamp reading "now".
+  const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [unreachable, setUnreachable] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getHealth()
+      .then((h) => !cancelled && setHealth(h))
+      .catch(() => !cancelled && setUnreachable(true));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const stale = health?.status === "stale" || health?.status === "degraded";
 
   return (
     <div
@@ -119,7 +148,10 @@ export function Brief({ children, rightMeta, section }: Props) {
           }}
         >
           {rightMeta}
-          <span>REF // {dateStamp}</span>
+          {health && (
+            <span>DATA // WEEK ENDING {health.latest_aggregate_week ?? "—"}</span>
+          )}
+          <span>INGEST // {ingestStamp(health, unreachable)}</span>
         </div>
 
         <span
@@ -129,10 +161,16 @@ export function Brief({ children, rightMeta, section }: Props) {
             color: colors.textMuted,
           }}
         >
-          <span className="stamp" style={{ color: colors.active }}>
-            DEVELOPMENT FIXTURE
-          </span>{" "}
-          — ALL CLAIMS ATTRIBUTED TO LINKED SOURCES. NO EDITORIAL INTERPRETATION.
+          {stale && (
+            <>
+              <span className="stamp" style={{ color: colors.active }}>
+                DATA MAY BE STALE
+              </span>{" "}
+              —{" "}
+            </>
+          )}
+          ACLED · UCDP · GDELT · RELIEFWEB — ALL CLAIMS ATTRIBUTED TO LINKED
+          SOURCES. NO EDITORIAL INTERPRETATION.
         </span>
       </footer>
     </div>

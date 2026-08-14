@@ -1,4 +1,5 @@
 import type {
+  ActivityItem,
   Actor,
   ActorRole,
   AdminConflictDetail,
@@ -13,6 +14,7 @@ import type {
   CrisisGraph,
   CrisisListItem,
   GlobeDot,
+  HealthStatus,
   IngestSummary,
   RoutingRule,
   RoutingRuleType,
@@ -53,6 +55,10 @@ async function request<T>(
 }
 
 export const api = {
+  getHealth: () => request<HealthStatus>("/api/health"),
+  // `days` counts back from the newest published incident, not from now.
+  listActivity: (days: number) =>
+    request<ActivityItem[]>(`/api/activity?days=${days}&limit=1000`),
   listGlobeDots: () => request<GlobeDot[]>("/api/globe"),
   listConflicts: () => request<ConflictListItem[]>("/api/conflicts"),
   getConflict: (slug: string) =>

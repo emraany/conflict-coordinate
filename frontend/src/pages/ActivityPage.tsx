@@ -1,43 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
+import { api } from "../api/client";
 import { Brief } from "../components/Brief";
 import { ConflictDetailPanel } from "../components/ConflictDetailPanel";
 import { StatusChip } from "../components/StatusChip";
 import { colors, fonts, space, statusColor } from "../styles/tokens";
-import type { ConflictStatus } from "../types";
+import type { ActivityItem, ConflictStatus } from "../types";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+type Window = "7d" | "30d" | "90d";
 
-type Window = "24h" | "7d" | "30d";
-
+// Windows count back from the newest published incident, not from today.
+// Event-level records are an archive: ACLED embargoes them ~12 months, so a
+// wall-clock "last 24 hours" is always empty and says nothing true.
 const WINDOWS: { key: Window; label: string; days: number }[] = [
-  { key: "24h", label: "24H", days: 1 },
   { key: "7d", label: "7D", days: 7 },
   { key: "30d", label: "30D", days: 30 },
+  { key: "90d", label: "90D", days: 90 },
 ];
 
 function fmtType(t: string | null): string {
   if (!t) return "—";
   return t.replace(/_/g, " ").toUpperCase();
-}
-
-interface ActivityItem {
-  id: number;
-  occurred_at: string;
-  event_type: string | null;
-  description: string | null;
-  fatalities: number | null;
-  location_name: string | null;
-  conflict_slug: string;
-  conflict_name: string;
-  conflict_primary_iso3: string | null;
-  conflict_status: ConflictStatus;
-  conflict_type: string | null;
-}
-
-function sinceISO(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString();
 }
 
 function dateLabel(iso: string): string {
@@ -83,8 +65,8 @@ export function ActivityPage() {
   useEffect(() => {
     const days = WINDOWS.find((w) => w.key === window)!.days;
     setLoading(true);
-    fetch(`${API_URL}/api/activity?since=${sinceISO(days)}&limit=1000`)
-      .then((r) => r.json())
+    api
+      .listActivity(days)
       .then((d) => { setItems(d); setLoading(false); })
       .catch(() => setLoading(false));
   }, [window]);
@@ -111,6 +93,8 @@ export function ActivityPage() {
   }
 
   const totalFatalities = filtered.reduce((s, i) => s + (i.fatalities ?? 0), 0);
+  // Items come back newest-first, so the first row IS the window's anchor.
+  const newestLabel = items.length > 0 ? dateLabel(items[0].occurred_at) : null;
 
   return (
     <Brief
@@ -140,9 +124,18 @@ export function ActivityPage() {
             paddingBottom: space.sm,
           }}
         >
-          <span className="stamp" style={{ fontSize: 14, letterSpacing: "0.22em", color: colors.text }}>
-            RECENT ACTIVITY
-          </span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span className="stamp" style={{ fontSize: 14, letterSpacing: "0.22em", color: colors.text }}>
+              RECORDED ACTIVITY
+            </span>
+            <span style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textDim }}>
+              {newestLabel
+                ? `windows count back from the most recent published record — ${newestLabel}`
+                : "individual records, each published on its source's own lag"}
+              . Publication lags differ by source: GDELT news signals are
+              current, UCDP incidents lag ~2 months, ACLED incidents ~12.
+            </span>
+          </div>
           <div style={{ display: "flex", gap: space.sm }}>
             {WINDOWS.map((w) => {
               const active = w.key === window;

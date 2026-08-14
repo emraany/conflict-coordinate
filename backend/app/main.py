@@ -9,6 +9,7 @@ from app.routers import (
     conflicts,
     crises,
     globe,
+    health,
     ingest,
     sources,
 )
@@ -38,13 +39,9 @@ app.include_router(actors.router)
 app.include_router(sources.router)
 app.include_router(ingest.router)
 app.include_router(activity.router)
+app.include_router(health.router)
 
 
 @app.on_event("startup")
 def _start_scheduler() -> None:
     ingest.start_scheduler()
-
-
-@app.get("/api/health")
-def health() -> dict:
-    return {"status": "ok"}

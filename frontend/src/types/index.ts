@@ -355,3 +355,28 @@ export interface CrisisGraph {
   edges: GraphEdge[];
   communities: string[][];
 }
+
+export interface HealthStatus {
+  status: "ok" | "stale" | "degraded";
+  latest_aggregate_week: string | null;
+  dots: number;
+  last_ingest_at: string | null;
+  last_ingest_ok: boolean | null;
+  last_successful_ingest_at: string | null;
+  days_since_successful_ingest: number | null;
+  stale_after_days: number;
+}
+
+export interface ActivityItem {
+  id: number;
+  occurred_at: string;
+  event_type: string | null;
+  description: string | null;
+  fatalities: number | null;
+  location_name: string | null;
+  conflict_slug: string;
+  conflict_name: string;
+  conflict_primary_iso3: string | null;
+  conflict_status: ConflictStatus;
+  conflict_type: string | null;
+}

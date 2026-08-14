@@ -7,7 +7,6 @@ import type {
   ConflictDetail,
   ConflictParty,
   CrisisEvent,
-  IntensityWeek,
   TopAdmin1,
 } from "../types";
 import { ActorList } from "./ActorList";
