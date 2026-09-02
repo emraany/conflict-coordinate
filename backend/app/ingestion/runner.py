@@ -326,7 +326,12 @@ def _refresh_crisis_activity_rollups(db: Session) -> dict:
     The window is anchored on the newest week present in the aggregate data,
     never wall-clock now: ACLED publishes weekly and lands ~1-2 weeks behind,
     so a wall-clock window would silently empty the globe between releases.
-    Crises with no qualifying activity are zeroed so aged-out dots disappear.
+
+    Every crisis is recomputed, not only those with qualifying activity: a
+    region whose violence stopped but whose protests continued still has rows
+    in the window, so keying the zero-out on "no rows at all" left it holding
+    a month-old count and standing on the globe as a dot that no current data
+    justifies.
     """
     types_sql = ", ".join(f"'{t}'" for t in VIOLENT_EVENT_TYPES)
     result = db.execute(
@@ -345,39 +350,28 @@ def _refresh_crisis_activity_rollups(db: Session) -> dict:
                 WHERE w.week_start > latest.w - make_interval(weeks => :weeks)
                   AND w.event_type IN ({types_sql})
                 GROUP BY w.crisis_id
+            ),
+            src AS (
+                SELECT c.id AS crisis_id, agg.ev, agg.fat, agg.pop, agg.last_week
+                FROM crises c
+                LEFT JOIN agg ON agg.crisis_id = c.id
             )
             UPDATE crises c
-            SET violence_4w_events = coalesce(agg.ev, 0),
-                violence_4w_fatalities = coalesce(agg.fat, 0),
-                violence_4w_pop_exposure = agg.pop,
-                latest_agg_week = agg.last_week
-            FROM agg
-            WHERE c.id = agg.crisis_id
+            SET violence_4w_events = coalesce(src.ev, 0),
+                violence_4w_fatalities = coalesce(src.fat, 0),
+                violence_4w_pop_exposure = src.pop,
+                latest_agg_week = src.last_week
+            FROM src
+            WHERE c.id = src.crisis_id
+              AND (c.violence_4w_events IS DISTINCT FROM coalesce(src.ev, 0)
+                OR c.violence_4w_fatalities IS DISTINCT FROM coalesce(src.fat, 0)
+                OR c.violence_4w_pop_exposure IS DISTINCT FROM src.pop
+                OR c.latest_agg_week IS DISTINCT FROM src.last_week)
             """
         ),
         {"weeks": DOT_WINDOW_WEEKS},
     )
     updated = result.rowcount or 0
-    # Zero out crises that had no qualifying activity in the window.
-    db.execute(
-        text(
-            """
-            UPDATE crises c
-            SET violence_4w_events = 0,
-                violence_4w_fatalities = 0,
-                violence_4w_pop_exposure = NULL
-            WHERE (c.violence_4w_events > 0 OR c.violence_4w_fatalities > 0)
-              AND NOT EXISTS (
-                  SELECT 1 FROM crisis_intensity_weekly w, (
-                      SELECT max(week_start) AS w FROM crisis_intensity_weekly
-                  ) latest
-                  WHERE w.crisis_id = c.id
-                    AND w.week_start > latest.w - make_interval(weeks => :weeks)
-              )
-            """
-        ),
-        {"weeks": DOT_WINDOW_WEEKS},
-    )
     db.commit()
     dots = db.scalar(
         select(func.count())
