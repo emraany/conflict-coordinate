@@ -219,24 +219,33 @@ def backfill(commit: bool, flip_legacy: bool) -> dict:
                 CrisisEvent.lng,
                 CrisisEvent.occurred_at,
                 CrisisEvent.fatalities,
+                CrisisEvent.conflict_id,
             )
         ).yield_per(2000)
 
         total_events = 0
         orphan_events = 0
         updates: list[tuple[int, int]] = []  # (event_id, conflict_id)
+        # Events carrying a stamp that current rules no longer justify. Routing
+        # runs at insert time, so without this a rule the registry has since
+        # narrowed or dropped keeps naming events forever.
+        clears: list[int] = []
 
         for row in events_iter:
             total_events += 1
             meta = crisis_meta.get(row.crisis_id)
             if meta is None:
                 orphan_events += 1
+                if row.conflict_id is not None:
+                    clears.append(row.id)
                 continue
             iso3, admin1_norm = meta
             actor_names = actors_by_crisis.get(row.crisis_id, [])
             conflict_id = route_event(actor_names, iso3, admin1_norm, idx)
             if conflict_id is None:
                 orphan_events += 1
+                if row.conflict_id is not None:
+                    clears.append(row.id)
                 continue
             updates.append((row.id, conflict_id))
             routed_per_conflict[conflict_id] += 1
@@ -273,6 +282,7 @@ def backfill(commit: bool, flip_legacy: bool) -> dict:
             "total_events": total_events,
             "orphan_events": orphan_events,
             "routed_events": total_events - orphan_events,
+            "cleared_events": len(clears),
             "per_conflict": [
                 {
                     "slug": slug_by_id.get(cid, f"#{cid}"),
@@ -306,6 +316,13 @@ def backfill(commit: bool, flip_legacy: bool) -> dict:
 
         # 1. Update crisis_events.conflict_id in batches.
         BATCH = 1000
+        for i in range(0, len(clears), BATCH):
+            db.execute(
+                update(CrisisEvent)
+                .where(CrisisEvent.id.in_(clears[i : i + BATCH]))
+                .values(conflict_id=None)
+            )
+        db.flush()
         for i in range(0, len(updates), BATCH):
             chunk = updates[i : i + BATCH]
             # Group by conflict_id so we can do bulk updates.
