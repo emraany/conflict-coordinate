@@ -171,6 +171,9 @@ class CrisisDetail(CrisisBase):
     violence_4w_fatalities: int = 0
     violence_4w_pop_exposure: int | None = None
     latest_agg_week: date | None = None
+    # What kind of violence, and the derived evidence for that call.
+    violence_class: str | None = None
+    violence_class_basis: str | None = None
     # What kind of violence was recorded, most frequent first.
     activity: list[ActivityType] = Field(default_factory=list)
     # Current narrative (ReliefWeb) and named-conflict context.

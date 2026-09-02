@@ -76,6 +76,11 @@ class Crisis(Base):
         Integer, default=0, server_default="0", nullable=False
     )
     violence_4w_pop_exposure: Mapped[int | None] = mapped_column(Integer)
+    # What kind of violence, from `app.conflicts.violence_class` — written by
+    # the same ingest step as the rollup above. `basis` is the derived
+    # evidence for the label, shown in the dossier so the call is auditable.
+    violence_class: Mapped[str | None] = mapped_column(String(24))
+    violence_class_basis: Mapped[str | None] = mapped_column(String(400))
     latest_agg_week: Mapped[date | None] = mapped_column(Date)
     country_iso3: Mapped[str | None] = mapped_column(String(3), index=True)
     admin1: Mapped[str | None] = mapped_column(String(120))

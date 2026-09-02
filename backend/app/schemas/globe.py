@@ -33,5 +33,8 @@ class GlobeDot(BaseModel):
     population_exposure: int | None
     latest_week: date | None
     conflict: ConflictLabel | None
+    # What kind of violence, and the derived evidence for that call.
+    violence_class: str | None
+    violence_class_basis: str | None
     # What kind of violence was recorded, most frequent first.
     activity: list[ActivityType]

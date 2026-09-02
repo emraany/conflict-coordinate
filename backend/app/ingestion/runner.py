@@ -188,8 +188,7 @@ def _replace_events(
     for ref in event_refs:
         source_id = (
             source_rows[ref.source_index].id
-            if ref.source_index is not None
-            and 0 <= ref.source_index < len(source_rows)
+            if ref.source_index is not None and 0 <= ref.source_index < len(source_rows)
             else None
         )
         db.add(
@@ -209,15 +208,13 @@ def _replace_events(
     db.flush()
 
 
-def _replace_intensity_rows(
-    db: Session, crisis_id: int, rows: list[IntensityRow]
-) -> int:
+def _replace_intensity_rows(db: Session, crisis_id: int, rows: list[IntensityRow]) -> int:
     """Replace weekly intensity rows for this crisis. Idempotent — same input
     yields same output. Wholesale replace because the aggregate xlsx is
     canonical for the entire 52w window."""
-    db.query(CrisisIntensityWeekly).filter(
-        CrisisIntensityWeekly.crisis_id == crisis_id
-    ).delete(synchronize_session=False)
+    db.query(CrisisIntensityWeekly).filter(CrisisIntensityWeekly.crisis_id == crisis_id).delete(
+        synchronize_session=False
+    )
     db.flush()
     for r in rows:
         db.add(
@@ -259,9 +256,7 @@ def _find_crisis(db: Session, source_name: str, rec: CrisisRecord) -> Crisis | N
     return db.scalar(select(Crisis).where(Crisis.slug == rec.slug))
 
 
-def _upsert_crisis(
-    db: Session, source_name: str, rec: CrisisRecord
-) -> tuple[Crisis, bool]:
+def _upsert_crisis(db: Session, source_name: str, rec: CrisisRecord) -> tuple[Crisis, bool]:
     crisis = _find_crisis(db, source_name, rec)
     created = False
     if crisis is None:
@@ -384,6 +379,59 @@ def _refresh_crisis_activity_rollups(db: Session) -> dict:
     return {"crises_updated": updated, "dots": int(dots or 0)}
 
 
+def _classify_violence(db: Session) -> dict:
+    """Label each dot with what kind of violence it is currently seeing.
+
+    Runs on the dots the rollup just recomputed, so the event mix it reads is
+    the same window the globe shows. Rules live in
+    `app.conflicts.violence_class`; this step only gathers their two inputs —
+    the window's event-type mix and the region's actor names — and writes the
+    result back.
+    """
+    from app.conflicts.violence_class import classify_region
+    from app.scripts.backfill_routing import actor_names_for_crises
+
+    crises = db.scalars(
+        select(Crisis).where(
+            (Crisis.violence_4w_events >= DOT_MIN_EVENTS)
+            | (Crisis.violence_4w_fatalities >= DOT_MIN_FATALITIES)
+        )
+    ).all()
+    if not crises:
+        return {"classified": 0}
+    ids = [c.id for c in crises]
+
+    # Every event type, not just the violent ones: the unrest read needs to
+    # see how much of a region's activity is protest.
+    mix: dict[int, dict[str, int]] = {}
+    for row in db.execute(
+        text(
+            """
+            WITH latest AS (
+                SELECT max(week_start) AS w FROM crisis_intensity_weekly
+            )
+            SELECT w.crisis_id, w.event_type, sum(w.event_count) AS ev
+            FROM crisis_intensity_weekly w, latest
+            WHERE w.crisis_id = ANY(:ids)
+              AND w.week_start > latest.w - make_interval(weeks => :weeks)
+            GROUP BY w.crisis_id, w.event_type
+            """
+        ),
+        {"ids": ids, "weeks": DOT_WINDOW_WEEKS},
+    ).all():
+        mix.setdefault(row.crisis_id, {})[row.event_type] = int(row.ev or 0)
+
+    actor_names = actor_names_for_crises(db, ids)
+    counts: dict[str, int] = {}
+    for crisis in crises:
+        cls, basis = classify_region(actor_names.get(crisis.id, []), mix.get(crisis.id, {}))
+        crisis.violence_class = cls
+        crisis.violence_class_basis = basis
+        counts[cls] = counts.get(cls, 0) + 1
+    db.commit()
+    return {"classified": len(crises), **counts}
+
+
 def _attach_field_reports(db: Session) -> dict:
     """Fetch recent ReliefWeb situation reports for every country that has a
     dot on the globe, stored once per (country, url) as country-scoped
@@ -447,9 +495,7 @@ def _reference_now() -> datetime:
     `app.scripts.backfill_routing._reference_now`."""
     if settings.acled_reference_date:
         try:
-            return datetime.fromisoformat(settings.acled_reference_date).replace(
-                tzinfo=UTC
-            )
+            return datetime.fromisoformat(settings.acled_reference_date).replace(tzinfo=UTC)
         except ValueError:
             pass
     return datetime.now(UTC)
@@ -523,9 +569,7 @@ def _start_ingest_run(trigger: str) -> int | None:
         return None
 
 
-def _finish_ingest_run(
-    run_id: int | None, ok: bool, result: dict, error: str | None
-) -> None:
+def _finish_ingest_run(run_id: int | None, ok: bool, result: dict, error: str | None) -> None:
     if run_id is None:
         return
     try:
@@ -588,15 +632,11 @@ def run_all_sources(db: Session | None = None, trigger: str = "cron") -> dict:
                         present_keys.add((rec.country_iso3, rec.admin1_norm))
 
                     if source.owns_sources:
-                        source_rows = _replace_sources(
-                            db, crisis, rec.sources, source.name
-                        )
+                        source_rows = _replace_sources(db, crisis, rec.sources, source.name)
                     else:
                         source_rows = []
                     if source.owns_actors:
-                        _replace_actor_links(
-                            db, crisis, rec.actors, source_rows, source.name
-                        )
+                        _replace_actor_links(db, crisis, rec.actors, source_rows, source.name)
                     if source.owns_events:
                         _replace_events(db, crisis, rec.events, source_rows, source.name)
                     if rec.intensity_rows:
@@ -627,9 +667,7 @@ def run_all_sources(db: Session | None = None, trigger: str = "cron") -> dict:
                         if sweep_count:
                             entry["dropped"] = sweep_count
                     else:
-                        logger.warning(
-                            "%s: incomplete fetch — skipping drop sweep", source.name
-                        )
+                        logger.warning("%s: incomplete fetch — skipping drop sweep", source.name)
                         entry["sweep_skipped"] = "incomplete fetch"
                 db.commit()
                 result["sources"].append(entry)
@@ -644,6 +682,7 @@ def run_all_sources(db: Session | None = None, trigger: str = "cron") -> dict:
         # Refresh the globe's dot layer from the freshly-ingested aggregates
         # before anything else in the tail — this is what the map reads.
         result["dot_rollups"] = _refresh_crisis_activity_rollups(db)
+        result["violence_classes"] = _classify_violence(db)
 
         # Route + roll up FIRST — this is the load-bearing tail step, so it
         # runs before anything slow or network-bound can kill the run.
@@ -659,9 +698,7 @@ def run_all_sources(db: Session | None = None, trigger: str = "cron") -> dict:
             "orphans": route_report.get("orphan_events"),
         }
 
-        promoted = _promote_emerging_conflicts(
-            db, settings.conflict_auto_promotion_events_4w
-        )
+        promoted = _promote_emerging_conflicts(db, settings.conflict_auto_promotion_events_4w)
         if promoted:
             db.commit()
         result["conflicts_promoted"] = promoted

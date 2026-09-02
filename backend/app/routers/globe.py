@@ -82,6 +82,8 @@ def list_globe_dots(
                 population_exposure=c.violence_4w_pop_exposure,
                 latest_week=c.latest_agg_week,
                 conflict=label,
+                violence_class=c.violence_class,
+                violence_class_basis=c.violence_class_basis,
                 activity=activity.get(c.id, []),
             )
         )
