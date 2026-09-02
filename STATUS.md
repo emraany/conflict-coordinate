@@ -1,29 +1,41 @@
-# Project status — 2026-09-02
+# Project status — 2026-09-02 (Phases A and B complete)
 
 Audited against the running local stack (colima + `conflict_db` + API on
 :8000), not against the docs. Every figure below came from the database or a
 live endpoint on that date; re-verify before acting on it (see the last
 section).
 
+**Phase A** (actor-aware dot naming, one four-week number) and **Phase B**
+(a real recorded ingest, both failure guards exercised, weekly cron) are
+done. The figures below are post-ingest and differ substantially from the
+pre-Phase-A audit — most visibly the dot count, which fell 350 → 311 as the
+window advanced three weeks. **Phase C is next.**
+
 ---
 
 ## Snapshot
 
-| | |
-|---|---|
-| Last ingest run | **2026-08-13** (ACLED cache + OAuth token mtimes) |
-| Newest aggregate week in DB | **2026-08-01** |
-| Age of the globe's data | **~4.5 weeks** (honest floor is ~10–14 days) |
-| `/api/health` status | `"stale"` |
-| Rows in `ingest_runs` | **0 — never written to** |
-| Globe dots | 350 admin1 regions, 55 countries |
-| Dots carrying a conflict name | 182 of 350 |
-| Registry conflicts | 22, of which 13 have zero footprint cells |
-| `crisis_events` | 245,321 rows, 143,871 already routed to a conflict |
-| `entity_mentions` (NER) | 985,998 |
-| DB size | 746 MB |
-| Frontend typecheck | `tsc -b` clean |
-| Deployed anywhere | no |
+| | before (audit) | now |
+|---|---|---|
+| Last ingest run | 2026-08-13 (inferred from file mtimes) | **2026-09-02, recorded, `ok=true`** |
+| Newest aggregate week in DB | 2026-08-01 | **2026-08-22** |
+| Newest event of any kind | 2026-08-14 | **2026-09-02** (GDELT, same-day) |
+| `/api/health` status | `"stale"` | **`"ok"`** |
+| Rows in `ingest_runs` | 0 — never written to | **2** (one failed, one ok) |
+| Scheduled ingest | none | **crontab, Tuesdays 06:00 UTC** |
+| Globe dots | 350 regions, 55 countries | **311 regions, 53 countries** |
+| Dots carrying a conflict name | 182 of 350 (52%) | **190 of 311 (61%)** |
+| Registry conflicts | 22, 13 with zero footprint cells | unchanged |
+| `crisis_events` | 245,321 rows, 143,871 routed | **268,029 rows, 153,889 routed** |
+| Events routed across a border | 2,792 | **0** |
+| `entity_mentions` (NER) | 985,998 | **1,038,243** |
+| DB size | 746 MB | **750 MB** |
+| Backend tests | none in repo | **5, passing** |
+| Frontend typecheck | `tsc -b` clean | clean |
+| Deployed anywhere | no | no |
+
+The largest dot on the globe is now `russia-belgorod` (1,701 events),
+correctly reading *Russo-Ukrainian War*. Before Phase A it was unnamed.
 
 ---
 
@@ -101,41 +113,66 @@ strings; LLM-authored prose is barred by the neutrality rules; and
 ### 2. It shows violent events, but calls itself a conflict map
 
 ```
-BRA 26   MEX 21   NGA 20   COL 19   MMR 16   IND 16
-UKR 16   RUS 16   YEM 15   SOM 14   IRN 12   SYR 12
+BRA 26   NGA 23   MEX 20   COL 20   UKR 16   SOM 15
+YEM 14   RUS 12   SDN 12   SYR 11   MMR 10   IRN  9
 ```
 
-Brazil outranks Ukraine on dot count. Iran, India, Bangladesh, Ecuador and
-Honduras appear via riots and criminal violence. That is the documented
-design, but it is the widest gap between what renders and what the project
-claims to be. 168 of 350 dots carry no conflict name at all, so their dossier
-section 03 is empty.
+Brazil still outranks Ukraine on dot count. Iran, India, Ecuador and Honduras
+appear via riots and criminal violence. That is the documented design, but it
+is the widest gap between what renders and what the project claims to be.
+**121 of 311 dots carry no conflict name** (was 168 of 350), so their dossier
+section 03 is empty. Phase A closed the share that was a routing bug; what is
+left is genuine registry coverage:
 
-### 3. Nothing keeps the data fresh
+```
+BRA 26   NGA 11   IRN 9   IRQ 9   ECU 8   HND 7   KEN 7   IND 6
+```
 
-The pipeline is code-complete and unscheduled. The freshness plumbing works —
-it is correctly reporting `stale`. But `ingest_runs` has never been written
-to (migration `0013` was authored the day after the last ingest), so **the
-cron path and the run-recording path are both untested end to end**, as are
-the two failure guards written specifically for unattended running.
+The largest unnamed dots are `brazil-rio-de-janeiro` (135 events),
+`brazil-bahia` (108), `brazil-pernambuco` (100), `ecuador-guayas` (88). None
+of those countries has a registry conflict at all — that is Phase C's
+subject, and no amount of routing work reaches it.
+
+### 3. ~~Nothing keeps the data fresh~~ — resolved in Phase B
+
+The pipeline now runs, records itself, and is scheduled. Both failure guards
+have executed against real data — one of them without being asked to. Detail
+under Phase B below. Two live bugs surfaced only because the ingest was
+finally run end to end, and both are fixed:
+
+- **GDELT had been dead in every run.** `data.gdeltproject.org` answers http
+  with a 301 to https and `httpx` does not follow redirects by default, so
+  the source failed on its first call every time. It now attaches events
+  again, and the newest event in the DB moved 2026-08-14 → same-day.
+- **Stale conflict stamps were never cleared.** `backfill` promised
+  "NULL on miss" but a miss only counted an orphan, so events kept a
+  `conflict_id` no current rule justified. 2,942 stamps were cleared on the
+  verifying run.
 
 ### 4. You can't find anything on the globe
 
 `pointsMerge={false}`, radius `0.34 + 0.1·log1p(events)`, click → dossier +
 fly-to, so every dot is its own object. But at the default altitude of 2.4
-with 350 dots the clusters collide, and there is **no search, no region list,
-no filter** on the map page. Hex view is a density read, not a disambiguator.
+with 311 dots the clusters still collide, and there is **no search, no region
+list, no filter** on the map page. Hex view is a density read, not a
+disambiguator.
 
 ### 5. Smaller seams
 
-- **Two different 4-week numbers in one dossier.** Donetsk header says 1,786
-  events; `stats.recent_4w_events` lower in the same panel says 2,260. Two
-  computations, one label.
-- **ReliefWeb section is thin** — 112 reports across 54 countries, roughly two
-  per country, country-scoped rather than region-scoped. Not broken; will
-  often look sparse.
-- **Archive is genuinely old** — Rio's newest incident is 2026-03-27,
-  Donetsk's 2026-06-30. Correctly labeled as an archive.
+- ~~**Two different 4-week numbers in one dossier.**~~ Fixed in Phase A. The
+  header, the `BREAKDOWN` bars and `stats.recent_4w_events` now agree by
+  construction; verified equal across all 311 dots. The audit misread which
+  two numbers collided — see A3 below.
+- **ReliefWeb section is thin** — 185 reports across 53 countries, roughly
+  three per country, country-scoped rather than region-scoped. Not broken;
+  will often look sparse.
+- **Archive is still genuinely old** — Rio's newest incident with prose is
+  2026-03-27, Donetsk's 2026-07-31. Correctly labeled as an archive; the
+  current layer is the aggregates, which are 11 days old.
+- **Nothing reaps an interrupted run.** A killed ingest leaves an
+  `ingest_runs` row with `finished_at` NULL forever. `/api/health` is
+  unaffected (it keys off the last *successful* run), so this is cosmetic —
+  but a long-running deployment will accumulate them.
 
 ---
 
@@ -174,21 +211,65 @@ are loaded but never become routing rules.
 **A3. Reconcile the duplicate 4-week number.**
 *Verify:* one number; both places agree on three spot-checked regions.
 
-### Phase B — make it live locally (~half a day, then a week of waiting)
+### Phase B — make it live locally ✅ **Done 2026-09-02**
 
-**B4. Run one full ingest end to end.**
-*Verify:* an `ingest_runs` row lands with `ok=true` — the first ever;
-`latest_agg_week` advances from 2026-08-01; `/api/health` flips `stale` → `ok`.
+**B4. Run one full ingest end to end.** ✅ It took two runs.
 
-**B5. Exercise the two failure paths that have never executed.**
-*Verify:* (a) force a source to raise → the run still completes, the error is
-recorded, rollups still refresh; (b) delete 4 of 6 cached ACLED region files
-→ `sweep_dropped` is skipped and zero crises are deleted.
+The first (`ingest_runs` id 2, 11m27s) came back **`ok=false`** — correctly.
+`ok = error is None and not source_failed`, and GDELT had failed on a 301
+redirect. That is the run-recording path working as designed: a run that
+half-worked must not read as healthy. After fixing GDELT, run id 3 (10m38s)
+is the **first `ok=true` ingest in the project's history**.
+*Verified:* `latest_agg_week` 2026-08-01 → **2026-08-22**; `/api/health`
+`stale` → **`ok`**; +22,708 events, +52,245 NER mentions; newest event now
+same-day via GDELT.
 
-**B6. Add the weekly crontab entry** (`0 6 * * 2`).
-*Verify:* a week later, an `ingest_runs` row exists that nobody triggered.
+**Dots fell 350 → 311, and that is aging, not loss.** 80 dots left the set,
+41 joined. All 80 still exist as rows with at most 4 events and 4 fatalities
+— just under the `>=5` threshold — and **zero were deleted**. No surviving
+dot changed its label, so the Phase A guard is stable across a re-ingest.
 
-Do B before C: the classifier in C should be built against fresh data.
+**B5. Exercise the two failure paths.** ✅ Both fired; one was never forced.
+
+- **(b) sweep guard — exercised live, unplanned.** ACLED's `asia-pacific`
+  region genuinely failed to resolve an xlsx URL that day, so
+  `fetch_complete = regions_ok == len(REGIONS)` went False on its own and the
+  run recorded `sweep_skipped: "incomplete fetch"`. Zero crises deleted.
+  No cache files needed deleting to simulate it. Note there are **two**
+  brakes, not one: the runner's `fetch_complete` gate, and a second
+  independent cap inside `sweep_dropped` that refuses any sweep exceeding
+  `SWEEP_MAX_DELETE_FRACTION` of candidates.
+- **(a) per-source isolation — half live, half injected.** GDELT's real
+  failure proved the run completes, the error lands in
+  `ingest_runs.result`, and the whole tail still refreshes. But GDELT is
+  *last* in `SOURCES`, so it could not show that a later source still runs.
+  Injecting a raising stub ahead of `FixtureSource` closed that: the stub's
+  error was recorded, `fixture` ran after it, and dot rollups, routing and
+  NER all completed. `/api/health` then read **`degraded`** — last run
+  failed, prior success intact — a third status value the audit never saw.
+  The two synthetic rows were deleted afterwards so the operational log holds
+  only real runs.
+
+**B6. Add the weekly crontab entry** ✅ Installed:
+
+```
+0 6 * * 2 cd /Users/emraan/Desktop/Conflict/backend && \
+  /opt/homebrew/bin/uv run python -m app.ingestion.runner \
+  >> /Users/emraan/.conflict-ingest.log 2>&1
+```
+
+Rather than wait a week for the verify, the command was run under `env -i`
+(cron's bare environment, no PATH or shell profile): config loads with
+credentials and the runner imports. `.env` resolves from `__file__`, so the
+working directory cannot break credentials.
+
+*Still unverified, and the likely failure mode:* on modern macOS,
+`/usr/sbin/cron` needs **Full Disk Access** to read anything under
+`~/Desktop`. The `env -i` test ran as the user and inherited the terminal's
+grant, so it does not prove cron itself can reach the repo. **If next
+Tuesday leaves no new `ingest_runs` row, that is the cause** — System
+Settings → Privacy & Security → Full Disk Access → add `/usr/sbin/cron`.
+Undo the schedule entirely with `crontab -r`.
 
 ### Phase C — fix the framing (~2–3 days; the real work)
 
@@ -238,29 +319,37 @@ were spot-checked.*
 
 | Batch | Contents | Notes |
 |---|---|---|
-| 1 | **Phase A** (A1–A3) | One plan. All three share the routing/naming code and one verification (the 350-label diff); splitting means running that diff three times. |
-| 2 | **Phase B** (B4–B6) | **No plan mode needed** — running commands and watching. B5 is the only thinking part, and that's a conversation. |
-| 3 | **Phase C** (C7–C8) | One plan, two commits. Plan together (how you classify determines what the UI can show); build C7, verify the 20 hand-checks, *then* C8. |
+| ~~1~~ | ~~**Phase A** (A1–A3)~~ | ✅ Done. A2 turned out to be a no-op; the label diff caught two cross-border regressions before they shipped. |
+| ~~2~~ | ~~**Phase B** (B4–B6)~~ | ✅ Done. No plan mode was needed, as predicted. Running it surfaced two live bugs the code review could not have. |
+| **3** | **Phase C** (C7–C8) ← **next** | One plan, two commits. Plan together (how you classify determines what the UI can show); build C7, verify the 20 hand-checks, *then* C8. |
 | 4 | **Phase D** (D9) | One small plan. |
 | 5 | E10, E11 | Separately, whenever. |
 
-**Prompt to open a planning session after a context clear:**
+**Prompt to open the next planning session after a context clear:**
 
-> Read `STATUS.md` and `CLAUDE.md`. Plan Phase A only. The numbers in
-> STATUS.md are a 2026-09-02 snapshot — verify the claims against the live
-> database and code before planning, don't trust the doc.
+> Read `STATUS.md` and `CLAUDE.md`. Plan Phase C only. The numbers in
+> STATUS.md are a 2026-09-02 post-ingest snapshot — verify the claims against
+> the live database and code before planning, don't trust the doc.
 
-That last clause matters: a plan built on a stale snapshot will be subtly
-wrong.
+That last clause matters, and Phases A and B both proved it: the audit's
+A1 target (206 named dots) was unreachable, its A2 was a no-op, and its A3
+named the wrong pair of numbers. Every one of those was caught by checking
+the doc against the database before writing code.
+
+**One caveat specific to Phase C.** C7's verify ("hand-check 20 dots") was
+written against a 350-dot globe. The set is now 311 and its composition
+shifted — 80 out, 41 in — so pick the 20 fresh rather than reusing any list.
+The four regions the audit named as examples (Ukraine armed, Rio criminal,
+Iran unrest) are all still dots.
 
 **Rhythm:**
 
 - **Don't clear between planning and implementing the same phase** — the
   plan's value is the context gathered while writing it.
 - **Clear between phases**, when the next one touches different code.
-- **Definitely clear before Phase C.** A and B leave a lot of ingest output
-  and label diffs in context that C doesn't need, and C most deserves a clean
-  head.
+- **Definitely clear before Phase C.** A and B left a lot of ingest output and
+  label diffs in context that C doesn't need, and C most deserves a clean
+  head. That clear is due now.
 
 ---
 
@@ -272,9 +361,15 @@ Plan phases 1–3 landed (`9b082c2`, `1e18206`, `b8eab47`): `backend/Dockerfile`
 guard, `ingest_runs`, and the real `/api/health`.
 
 Not started: Railway (PostGIS ≥2 GB volume, API, cron `0 6 * * 2`),
-`alembic upgrade head` + `pg_dump`/`pg_restore` of the 746 MB DB (PG16 → PG17,
+`alembic upgrade head` + `pg_dump`/`pg_restore` of the 750 MB DB (PG16 → PG17,
 use a `postgis/postgis:17-3.5` client), the Vercel project and
 `VITE_API_URL`, and an uptime monitor on `/api/health`. See `DEPLOY.md`.
+
+The local crontab from B6 is an **interim** measure and should be removed
+(`crontab -r`) once the Railway cron service runs — otherwise two schedulers
+ingest into two databases. `/api/health` is now worth pointing an uptime
+monitor at: it distinguishes `ok`, `degraded` (last run failed, earlier
+success stands) and `stale` (no success within `STATUS_STALE_DAYS`).
 
 Two gaps the deploy plan called for and didn't get:
 
@@ -313,13 +408,45 @@ Tracker (scraping), IISS Armed Conflict Survey (paywalled).
 
 ```bash
 docker compose up -d
-cd backend && uv run uvicorn app.main:app --port 8000
+cd backend && uv run uvicorn app.main:app --reload --port 8000
+cd ../frontend && npm run dev        # :5173
 
 curl -s localhost:8000/api/health | python3 -m json.tool
-curl -s localhost:8000/api/globe | python3 -c "import json,sys;print(len(json.load(sys.stdin)))"
+
+# dots, and how many carry a conflict name
+curl -s localhost:8000/api/globe | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+print(len(d), 'dots,', sum(1 for x in d if x.get('conflict')), 'named')"
+
+# the three four-week numbers must all agree (A3)
+curl -s localhost:8000/api/crises/ukraine-donetsk | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+print(d['violence_4w_events'], sum(a['events'] for a in d['activity']), d['stats']['recent_4w_events'])"
+
+cd ../backend && uv run pytest -q          # 5 tests, routing guard
+crontab -l                                  # the weekly ingest
 
 docker exec conflict_db psql -U conflict -d conflict \
-  -c "select max(latest_agg_week), count(*) filter (where violence_4w_events>=5 or violence_4w_fatalities>=5) from crises;" \
-  -c "select count(*) from ingest_runs;" \
+  -c "select id, ok, trigger, finished_at from ingest_runs order by id;" \
+  -c "select max(week_start) from crisis_intensity_weekly;" \
   -c "select count(*) filter (where conflict_id is not null), count(*) from crisis_events;"
+
+# must return 0 — no event routed outside its conflict's own geography
+docker exec conflict_db psql -U conflict -d conflict -c "
+select count(*) from crisis_events e
+  join crises c on c.id = e.crisis_id
+  join conflicts cf on cf.id = e.conflict_id
+where c.country_iso3 <> cf.primary_iso3
+  and not (c.country_iso3 = any(cf.secondary_iso3s));"
 ```
+
+**Re-running the ingest by hand** (~11 minutes, network-bound):
+
+```bash
+cd backend && uv run python -m app.ingestion.runner
+```
+
+It is idempotent. Do **not** run `backfill_routing --commit` on its own to
+force a re-route: it also rewrites conflict centroids and `intensity_4w_*`,
+and flips `crises.legacy` unless `--no-legacy-flip` is passed. The ingest
+tail calls it correctly already.
