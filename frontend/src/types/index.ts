@@ -4,6 +4,15 @@
 export type CrisisStatus = "active" | "frozen" | "resolved";
 export type ConflictStatus = "active" | "frozen" | "resolved" | "emerging";
 export type ActorRole = "party" | "mediator" | "observer" | "affected";
+/**
+ * What kind of violence a region is currently seeing, derived at ingest from
+ * its actor names and event mix. `unclear` is a real answer, not a gap.
+ */
+export type ViolenceClass =
+  | "armed_conflict"
+  | "criminal_violence"
+  | "unrest"
+  | "unclear";
 export type ActorType = "state" | "non_state" | "coalition" | "other";
 export type SourceType =
   | "news"
@@ -91,6 +100,9 @@ export interface GlobeDot {
   population_exposure: number | null;
   latest_week: string | null;
   conflict: ConflictLabel | null;
+  violence_class: ViolenceClass | null;
+  /** The derived evidence for `violence_class` — actor names and event shares. */
+  violence_class_basis: string | null;
   /** What kind of violence was recorded, most frequent first. */
   activity: ActivityType[];
 }
@@ -162,6 +174,9 @@ export interface CrisisDetail {
   violence_4w_fatalities: number;
   violence_4w_pop_exposure: number | null;
   latest_agg_week: string | null;
+  violence_class: ViolenceClass | null;
+  /** The derived evidence for `violence_class` — actor names and event shares. */
+  violence_class_basis: string | null;
   /** What kind of violence was recorded, most frequent first. */
   activity: ActivityType[];
   field_reports: Source[];

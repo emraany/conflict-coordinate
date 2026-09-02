@@ -15,6 +15,7 @@ import {
   SubHeader,
   activitySummary,
   formatYmd,
+  violenceClassLabel,
 } from "./dossier";
 
 interface Props {
@@ -189,6 +190,24 @@ export function RegionDetailPanel({ slug, onClose }: Props) {
                 flexWrap: "wrap",
               }}
             >
+              {/* What kind of violence, before which conflict claims it — the
+                  class is derived from this region's own evidence, the name
+                  from the registry. `title` carries that evidence. */}
+              <span
+                style={{
+                  color:
+                    detail.violence_class && detail.violence_class !== "unclear"
+                      ? colors.text
+                      : colors.textDim,
+                  border: `1px solid ${colors.rule}`,
+                  padding: "1px 6px",
+                  fontSize: 10,
+                  letterSpacing: "0.14em",
+                }}
+                title={detail.violence_class_basis ?? undefined}
+              >
+                {violenceClassLabel(detail.violence_class)}
+              </span>
               {ctx ? (
                 <span
                   style={{

@@ -5,9 +5,27 @@ import { Brief } from "../components/Brief";
 import { Globe, lethalityColor } from "../components/Globe";
 import { RegionDetailPanel } from "../components/RegionDetailPanel";
 import { colors, fonts, space } from "../styles/tokens";
-import type { GlobeDot } from "../types";
+import type { GlobeDot, ViolenceClass } from "../types";
+import { VIOLENCE_CLASS_LABEL } from "../components/dossier";
 
-function Legend({ latestWeek }: { latestWeek: string | null }) {
+const CLASS_ORDER: ViolenceClass[] = [
+  "armed_conflict",
+  "criminal_violence",
+  "unrest",
+  "unclear",
+];
+
+function Legend({
+  latestWeek,
+  dots,
+}: {
+  latestWeek: string | null;
+  dots: GlobeDot[];
+}) {
+  const byClass = CLASS_ORDER.map((c) => ({
+    cls: c,
+    n: dots.filter((d) => (d.violence_class ?? "unclear") === c).length,
+  })).filter((row) => row.n > 0);
   // Ramp samples match lethalityColor(fatalities) in Globe.tsx.
   const ramp = [0, 5, 25, 120, 600];
   return (
@@ -70,6 +88,37 @@ function Legend({ latestWeek }: { latestWeek: string | null }) {
         <span style={{ color: colors.textMuted }}>{latestWeek ?? "—"}</span>,
         per ACLED weekly aggregates (published ~1–2 weeks behind).
       </div>
+      <div
+        className="label"
+        style={{
+          fontSize: 10,
+          color: colors.textMuted,
+          marginTop: space.sm,
+          paddingTop: space.sm,
+          borderTop: `1px solid ${colors.rule}`,
+        }}
+      >
+        BY KIND OF VIOLENCE
+      </div>
+      <div
+        style={{
+          fontSize: 9,
+          color: colors.textDim,
+          lineHeight: 1.6,
+          letterSpacing: "0.04em",
+        }}
+      >
+        {byClass.map((row, i) => (
+          <span key={row.cls}>
+            {i > 0 ? " · " : ""}
+            {VIOLENCE_CLASS_LABEL[row.cls].toLowerCase()}{" "}
+            <span style={{ color: colors.textMuted }}>{row.n}</span>
+          </span>
+        ))}
+        <br />
+        Classed from each region's own actors and event mix; filter with the
+        chips at bottom right.
+      </div>
     </div>
   );
 }
@@ -130,7 +179,7 @@ export function MapPage() {
             onSelect={setSelectedSlug}
             selectedSlug={selectedSlug}
           />
-          <Legend latestWeek={latestWeek} />
+          <Legend latestWeek={latestWeek} dots={dots} />
           {error && (
             <div
               style={{

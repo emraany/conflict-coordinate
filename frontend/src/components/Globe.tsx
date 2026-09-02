@@ -4,7 +4,7 @@ import type { GlobeMethods } from "react-globe.gl";
 
 import { colors, dotRamp, fonts, space } from "../styles/tokens";
 import type { GlobeDot } from "../types";
-import { activitySummary } from "./dossier";
+import { activitySummary, violenceClassLabel } from "./dossier";
 
 interface Props {
   dots: GlobeDot[];
@@ -27,6 +27,18 @@ interface RingDatum {
 type TextureMode = "color" | "mono";
 type ViewMode = "dots" | "hex";
 
+// Filtering, not colouring: colour already carries lethality, and one
+// variable per channel is the whole reason the legend is readable. Regions
+// classed `unclear` are reachable only under ALL — there is nothing to
+// filter them by.
+const CLASS_FILTERS = [
+  { key: "all", label: "ALL" },
+  { key: "armed_conflict", label: "ARMED" },
+  { key: "criminal_violence", label: "CRIMINAL" },
+  { key: "unrest", label: "UNREST" },
+] as const;
+type ClassFilter = (typeof CLASS_FILTERS)[number]["key"];
+
 const COLOR_TEXTURE = "//unpkg.com/three-globe/example/img/earth-blue-marble.jpg";
 const BUMP_TEXTURE = "//unpkg.com/three-globe/example/img/earth-topology.png";
 
@@ -34,6 +46,7 @@ const LS_TEXTURE = "cc.globe.texture";
 const LS_AUTOROTATE = "cc.globe.autoRotate";
 const LS_BORDERS = "cc.globe.borders";
 const LS_VIEWMODE = "cc.globe.viewMode";
+const LS_CLASSFILTER = "cc.globe.classFilter";
 
 // Floor is generous: the smallest qualifying region still has to be findable
 // and clickable on a rotating globe.
@@ -122,20 +135,24 @@ function GlobeControlChips({
   autoRotate,
   showBorders,
   viewMode,
+  classFilter,
   onToggleTexture,
   onToggleAutoRotate,
   onToggleBorders,
   onToggleView,
+  onSetClassFilter,
   onResetView,
 }: {
   textureMode: TextureMode;
   autoRotate: boolean;
   showBorders: boolean;
   viewMode: ViewMode;
+  classFilter: ClassFilter;
   onToggleTexture: () => void;
   onToggleAutoRotate: () => void;
   onToggleBorders: () => void;
   onToggleView: () => void;
+  onSetClassFilter: (next: ClassFilter) => void;
   onResetView: () => void;
 }) {
   const chipStyle = {
@@ -156,10 +173,36 @@ function GlobeControlChips({
         right: space.md,
         bottom: space.md,
         display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-end",
         gap: space.sm,
         zIndex: 2,
       }}
     >
+      <div style={{ display: "flex", gap: space.sm }}>
+        {CLASS_FILTERS.map((f) => (
+          <button
+            key={f.key}
+            type="button"
+            onClick={() => onSetClassFilter(f.key)}
+            style={{
+              ...chipStyle,
+              color:
+                classFilter === f.key ? colors.oliveLight : colors.textMuted,
+              borderColor:
+                classFilter === f.key ? colors.oliveDim : colors.rule,
+            }}
+            title={
+              f.key === "all"
+                ? "Show every region, including unclassified ones"
+                : `Show only regions classed ${f.label.toLowerCase()}`
+            }
+          >
+            [ {f.label} ]
+          </button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: space.sm }}>
       <button
         type="button"
         onClick={onToggleView}
@@ -212,6 +255,7 @@ function GlobeControlChips({
       >
         [ RESET ]
       </button>
+      </div>
     </div>
   );
 }
@@ -234,13 +278,18 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     readLocal<ViewMode>(LS_VIEWMODE, "dots"),
   );
+  const [classFilter, setClassFilter] = useState<ClassFilter>(() =>
+    readLocal<ClassFilter>(LS_CLASSFILTER, "all"),
+  );
   const [activeTextureUrl, setActiveTextureUrl] = useState<string>(COLOR_TEXTURE);
   const [countriesGeo, setCountriesGeo] = useState<object[]>([]);
 
   const points: PointDatum[] = useMemo(
     () =>
-      dots.map((d) => ({ ...d, __color: lethalityColor(d.fatalities_4w) })),
-    [dots],
+      dots
+        .filter((d) => classFilter === "all" || d.violence_class === classFilter)
+        .map((d) => ({ ...d, __color: lethalityColor(d.fatalities_4w) })),
+    [dots, classFilter],
   );
 
   const displayedCountries = useMemo<object[]>(
@@ -252,7 +301,7 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
   // each would be noise rather than signal.
   const rings: RingDatum[] = useMemo(() => {
     const threshold = 25;
-    return dots
+    return points
       .filter((d) => d.fatalities_4w >= threshold)
       .map((d) => ({
         lat: d.lat,
@@ -261,7 +310,7 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
         propagationSpeed: 2,
         repeatPeriod: 2000,
       }));
-  }, [dots]);
+  }, [points]);
 
   // Track container size so the globe canvas matches its parent (not the window).
   useEffect(() => {
@@ -321,6 +370,11 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
   useEffect(() => {
     window.localStorage.setItem(LS_VIEWMODE, viewMode);
   }, [viewMode]);
+
+  // Persist the violence-class filter.
+  useEffect(() => {
+    window.localStorage.setItem(LS_CLASSFILTER, classFilter);
+  }, [classFilter]);
 
   // Fly to selected conflict.
   useEffect(() => {
@@ -408,11 +462,9 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
             <div style="font-size:13px;color:${p.__color};">${activitySummary(p.activity) ?? "Recorded violence"}</div>
             <div style="font-size:11px;margin-top:2px;">${p.name}</div>
             <div style="color:${colors.textMuted};font-size:10px;margin-top:3px;">${p.events_4w.toLocaleString()} events${p.fatalities_4w > 0 ? ` · † ${p.fatalities_4w.toLocaleString()} killed` : " · no deaths reported"} · 4 wks to ${formatWeek(p.latest_week)}</div>
-            ${
-              p.conflict
-                ? `<div style="color:${colors.oliveLight};font-size:10px;margin-top:3px;">part of ${p.conflict.name}</div>`
-                : ""
-            }
+            <div style="color:${p.violence_class && p.violence_class !== "unclear" ? colors.oliveLight : colors.textDim};font-size:10px;margin-top:3px;">[ ${violenceClassLabel(p.violence_class)} ]${
+              p.conflict ? ` &nbsp;part of ${p.conflict.name}` : ""
+            }</div>
           </div>`;
         }}
         onPointClick={(p) => onSelect((p as PointDatum).slug)}
@@ -496,6 +548,8 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
       )}
 
       <GlobeControlChips
+        classFilter={classFilter}
+        onSetClassFilter={setClassFilter}
         textureMode={textureMode}
         autoRotate={autoRotate}
         showBorders={showBorders}

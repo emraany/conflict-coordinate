@@ -4,7 +4,23 @@
  * same document rather than drifting apart.
  */
 import { colors, fonts, space } from "../../styles/tokens";
-import type { ActivityType, IntensityWeek } from "../../types";
+import type { ActivityType, IntensityWeek, ViolenceClass } from "../../types";
+
+/**
+ * How a violence class is written wherever it appears — the globe tooltip,
+ * the dossier header, the legend. `unclear` says so plainly rather than
+ * borrowing one of the other three.
+ */
+export const VIOLENCE_CLASS_LABEL: Record<ViolenceClass, string> = {
+  armed_conflict: "ARMED CONFLICT",
+  criminal_violence: "CRIMINAL VIOLENCE",
+  unrest: "UNREST",
+  unclear: "UNCLASSIFIED",
+};
+
+export function violenceClassLabel(cls: ViolenceClass | null): string {
+  return cls ? VIOLENCE_CLASS_LABEL[cls] : VIOLENCE_CLASS_LABEL.unclear;
+}
 
 /**
  * What a place is going through, in ACLED's own event categories — never a
