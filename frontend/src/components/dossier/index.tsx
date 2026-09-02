@@ -291,16 +291,35 @@ export function IntensitySparkline({
   );
 }
 
-export function EventTypeBreakdown({ weeks }: { weeks: IntensityWeek[] }) {
-  const tail = weeks.slice(-4);
-  if (tail.length === 0) return null;
+/**
+ * Fold a 52-week series down to the trailing four buckets, all categories.
+ *
+ * Only the conflict dossier needs this: its intensity comes from routed
+ * `crisis_events` rather than the weekly violence rollup, so it has no
+ * `activity` to read. The region dossier passes its rollup straight in.
+ */
+export function activityFromWeeks(weeks: IntensityWeek[]): ActivityType[] {
   const totals = new Map<string, number>();
-  for (const w of tail) {
+  for (const w of weeks.slice(-4)) {
     for (const [type, n] of Object.entries(w.event_count_by_type)) {
       totals.set(type, (totals.get(type) ?? 0) + n);
     }
   }
-  const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+  return [...totals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([type, events]) => ({ type, events, fatalities: 0 }));
+}
+
+/**
+ * The header's event count, decomposed by category. Reads the same rollup the
+ * header does — violent types, one window, anchored on the newest aggregate
+ * week — so the bars always sum to the number printed above them. Deriving it
+ * from the 52-week series instead put a different window and an unfiltered set
+ * of categories under the same "last 4 weeks" label.
+ */
+export function EventTypeBreakdown({ activity }: { activity: ActivityType[] }) {
+  // Already ordered most-frequent-first by the API.
+  const ranked = activity.slice(0, 6).map((a) => [a.type, a.events] as const);
   if (ranked.length === 0) return null;
   const max = ranked[0][1];
   return (

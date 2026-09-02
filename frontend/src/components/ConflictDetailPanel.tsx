@@ -17,6 +17,7 @@ import {
   SectionHeader,
   StatTile,
   SubHeader,
+  activityFromWeeks,
   formatDuration,
   formatMonth,
   formatYmd,
@@ -393,7 +394,7 @@ export function ConflictDetailPanel({ slug, onClose }: Props) {
                       weeks={detail.intensity_52w}
                       caption="WEEKLY EVENT COUNT — ALL ROUTED SOURCES"
                     />
-                    <EventTypeBreakdown weeks={detail.intensity_52w} />
+                    <EventTypeBreakdown activity={activityFromWeeks(detail.intensity_52w)} />
                   </>
                 )}
                 {detail.summary ? (

@@ -348,7 +348,7 @@ export function RegionDetailPanel({ slug, onClose }: Props) {
                       weeks={detail.intensity_52w}
                       caption="WEEKLY EVENT COUNT — ACLED AGGREGATES"
                     />
-                    <EventTypeBreakdown weeks={detail.intensity_52w} />
+                    <EventTypeBreakdown activity={detail.activity} />
                   </>
                 )}
               </section>

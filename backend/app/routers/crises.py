@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
@@ -51,14 +51,13 @@ from app.schemas import (
 router = APIRouter(prefix="/api/crises", tags=["crises"])
 
 
-def _load_intensity_52w(
-    db: Session, crisis_id: int
-) -> tuple[list[IntensityWeek], int, int, int | None]:
-    """Return (weeks, recent_4w_events, recent_4w_fatalities, recent_pop_exposed).
+def _load_intensity_52w(db: Session, crisis_id: int) -> list[IntensityWeek]:
+    """Up to 52 weeks of weekly aggregate rows for the crisis — the sparkline's
+    trend series.
 
-    Reads up to 52 weeks of weekly aggregate rows for the crisis. Population
-    exposure is MAX (not SUM) over the active window because the same admin1
-    population is repeated weekly when there's any activity.
+    The current-window totals are deliberately NOT computed here. They live on
+    `crises.violence_4w_*`, where the ingest rollup writes them, so the dossier
+    quotes the same figure that sizes the dot.
     """
     rows = db.execute(
         select(
@@ -98,21 +97,7 @@ def _load_intensity_52w(
         for w in sorted_weeks[cutoff_idx:]
     ]
 
-    # 4-week window anchored on the most recent week present.
-    latest = sorted_weeks[-1]
-    active_cutoff = latest - timedelta(weeks=4)
-    recent_events = 0
-    recent_fatalities = 0
-    recent_exposure: int | None = None
-    for w in sorted_weeks:
-        if w < active_cutoff:
-            continue
-        bucket = by_week[w]
-        recent_events += sum(bucket["counts"].values())
-        recent_fatalities += bucket["fatalities"]
-        if bucket["exposure"] is not None:
-            recent_exposure = max(recent_exposure or 0, bucket["exposure"])
-    return weeks, recent_events, recent_fatalities, recent_exposure
+    return weeks
 
 
 def _compute_stats(
@@ -192,7 +177,7 @@ def _load_crisis_detail(db: Session, crisis: Crisis) -> CrisisDetail:
         )
         for link in crisis.actor_links
     ]
-    weeks, r4_events, r4_fatalities, r4_exposed = _load_intensity_52w(db, crisis.id)
+    weeks = _load_intensity_52w(db, crisis.id)
 
     # Timeline: incidents WITH prose only. GDELT rows carry no description —
     # they feed the 7-day signal instead of padding the archive with blanks.
@@ -214,9 +199,9 @@ def _load_crisis_detail(db: Session, crisis: Crisis) -> CrisisDetail:
 
     stats = _compute_stats(
         crisis.events,
-        recent_4w_events=r4_events,
-        recent_4w_fatalities=r4_fatalities,
-        recent_population_exposed=r4_exposed,
+        recent_4w_events=crisis.violence_4w_events,
+        recent_4w_fatalities=crisis.violence_4w_fatalities,
+        recent_population_exposed=crisis.violence_4w_pop_exposure,
     )
     stats.gdelt_7d_reports = gdelt_7d_reports(db, CrisisEvent.crisis_id, crisis.id)
 
