@@ -36,7 +36,7 @@ from app.models.event import CrisisEvent
 
 logger = logging.getLogger(__name__)
 
-GDELT_LASTUPDATE_URL = "http://data.gdeltproject.org/gdeltv2/lastupdate.txt"
+GDELT_LASTUPDATE_URL = "https://data.gdeltproject.org/gdeltv2/lastupdate.txt"
 
 GDELT_COLUMNS = [
     "GLOBALEVENTID",
@@ -125,7 +125,7 @@ _INCOMPATIBLE: frozenset[tuple[str, str]] = frozenset(
 def _latest_export_urls() -> list[str]:
     """Return up to N most-recent export CSV.zip URLs (15-min cadence each)."""
     n = max(1, settings.gdelt_lookback_minutes // 15)
-    resp = httpx.get(GDELT_LASTUPDATE_URL, timeout=30.0)
+    resp = httpx.get(GDELT_LASTUPDATE_URL, timeout=30.0, follow_redirects=True)
     resp.raise_for_status()
     line = resp.text.strip().splitlines()[0]
     url = line.split()[-1]
@@ -142,7 +142,7 @@ def _latest_export_urls() -> list[str]:
         minute = (prev.minute // 15) * 15
         prev = prev.replace(minute=minute, second=0, microsecond=0)
         urls.append(
-            "http://data.gdeltproject.org/gdeltv2/"
+            "https://data.gdeltproject.org/gdeltv2/"
             + prev.strftime("%Y%m%d%H%M%S")
             + ".export.CSV.zip"
         )
@@ -151,7 +151,7 @@ def _latest_export_urls() -> list[str]:
 
 def _fetch_events_csv(url: str) -> list[dict]:
     try:
-        resp = httpx.get(url, timeout=60.0)
+        resp = httpx.get(url, timeout=60.0, follow_redirects=True)
         resp.raise_for_status()
     except httpx.HTTPError:
         return []
