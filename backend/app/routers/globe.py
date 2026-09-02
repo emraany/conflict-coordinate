@@ -26,7 +26,7 @@ from app.dossier import activity_for_crises
 from app.ingestion.runner import DOT_MIN_EVENTS, DOT_MIN_FATALITIES
 from app.models import Conflict, Crisis
 from app.schemas.globe import ConflictLabel, GlobeDot
-from app.scripts.backfill_routing import _load_routing_index
+from app.scripts.backfill_routing import _load_routing_index, actor_names_for_crises
 
 router = APIRouter(prefix="/api/globe", tags=["globe"])
 
@@ -48,7 +48,11 @@ def list_globe_dots(
         .order_by(Crisis.violence_4w_events.desc())
     ).all()
 
-    activity = activity_for_crises(db, [c.id for c in rows])
+    crisis_ids = [c.id for c in rows]
+    activity = activity_for_crises(db, crisis_ids)
+    # Prefetched in one query: `Crisis.actor_links` is lazy here, so reaching
+    # for it per dot would cost two round-trips each.
+    actor_names = actor_names_for_crises(db, crisis_ids)
     idx = _load_routing_index(db)
     conflict_names = {
         row.id: (row.slug, row.name)
@@ -58,7 +62,9 @@ def list_globe_dots(
     dots: list[GlobeDot] = []
     for c in rows:
         label: ConflictLabel | None = None
-        conflict_id = route_event([], c.country_iso3, c.admin1_norm, idx)
+        conflict_id = route_event(
+            actor_names.get(c.id, []), c.country_iso3, c.admin1_norm, idx
+        )
         if conflict_id is not None and conflict_id in conflict_names:
             slug, name = conflict_names[conflict_id]
             label = ConflictLabel(slug=slug, name=name)

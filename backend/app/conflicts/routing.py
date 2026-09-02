@@ -5,7 +5,11 @@ once from `conflict_routing_rules`) plus the event's identifying fields, and
 returns a `conflict_id` (or `None` for orphans).
 
 Priority order (lowest priority number wins):
-  1. Actor match  — any of the event's actor strings matches a LIKE pattern.
+  1. Actor match  — any of the event's actor strings matches a LIKE pattern,
+     provided the event's country is one the conflict actually spans. Armed
+     groups appear far outside their own war (Hezbollah in Syria, Ukrainian
+     forces in Kazakhstan), and without that bound a single actor string
+     drags a whole region under the wrong conflict's name.
   2. Admin1 match — (iso3, admin1_norm) is in a conflict footprint.
   3. Country fallback — iso3 has exactly one conflict claiming it. If two or
      more conflicts list the same iso3 in `country_patterns`, the fallback
@@ -39,6 +43,12 @@ class RoutingIndex:
     # when the list has exactly one entry (unambiguous).
     country_rules: dict[str, list[int]] = field(default_factory=dict)
 
+    # conflict_id -> the ISO3s that conflict spans. Bounds tier 1: an actor
+    # match only counts inside the conflict's own geography. A conflict absent
+    # from this map is unrestricted, so an index built without it behaves
+    # exactly as before.
+    actor_scope: dict[int, set[str]] = field(default_factory=dict)
+
 
 def _compile_like(pattern: str) -> re.Pattern[str]:
     """Translate a SQL-LIKE pattern to a case-insensitive regex.
@@ -61,14 +71,18 @@ def _compile_like(pattern: str) -> re.Pattern[str]:
 
 def build_routing_index(
     rules: Iterable[tuple[int, str, str, int]],
+    conflict_iso3s: dict[int, set[str]] | None = None,
 ) -> RoutingIndex:
     """Build the in-memory routing index.
 
     `rules` is an iterable of (conflict_id, rule_type, pattern, priority)
     tuples — the natural shape of a `SELECT conflict_id, rule_type, pattern,
     priority FROM conflict_routing_rules ORDER BY priority` query.
+
+    `conflict_iso3s` maps conflict_id to the countries that conflict spans
+    (primary + secondary). Conflicts it omits keep unbounded actor matching.
     """
-    idx = RoutingIndex()
+    idx = RoutingIndex(actor_scope=dict(conflict_iso3s or {}))
 
     # Sort by priority so the actor rules end up ahead of admin1/country in
     # the actor_rules list. Within a priority, preserve insertion order.
@@ -105,17 +119,23 @@ def route_event(
     Args:
         actors: any number of raw actor strings (actor1, actor2,
             assoc_actor_1, assoc_actor_2, …). Empty / None entries skipped.
-        iso3: ISO-3166-1 alpha-3 country code, uppercase.
+        iso3: ISO-3166-1 alpha-3 country code, uppercase. Also bounds the
+            actor tier — see `RoutingIndex.actor_scope`.
         admin1_norm: normalized admin1 name (lowercase, ASCII-fold).
         idx: a RoutingIndex built from `conflict_routing_rules`.
     """
-    # 1. Actor match (highest priority).
+    # 1. Actor match (highest priority), bounded by the conflict's geography.
+    scoped_iso3 = iso3.upper() if iso3 else None
     for actor in actors:
         if not actor:
             continue
         for regex, conflict_id in idx.actor_rules:
-            if regex.match(actor):
-                return conflict_id
+            if not regex.match(actor):
+                continue
+            spans = idx.actor_scope.get(conflict_id)
+            if spans is not None and scoped_iso3 not in spans:
+                continue
+            return conflict_id
 
     # 2. Admin1 match.
     if iso3 and admin1_norm:

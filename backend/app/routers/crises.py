@@ -152,7 +152,10 @@ def _conflict_context(db: Session, crisis: Crisis) -> ConflictContext | None:
     `route_event` the ingest pipeline uses, so a region's label can never
     disagree with where its events were routed."""
     idx = _load_routing_index(db)
-    conflict_id = route_event([], crisis.country_iso3, crisis.admin1_norm, idx)
+    actor_names = [link.actor.name for link in crisis.actor_links]
+    conflict_id = route_event(
+        actor_names, crisis.country_iso3, crisis.admin1_norm, idx
+    )
     if conflict_id is None:
         return None
     conflict = db.scalars(

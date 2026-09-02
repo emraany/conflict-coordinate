@@ -69,6 +69,9 @@ def _reference_now() -> datetime:
 
 
 def _load_routing_index(db: Session):
+    """Build the routing index every caller shares — the two dossier label
+    sites and the ingest runner all come through here, so the actor tier is
+    bounded by the same geography wherever it is applied."""
     rules = db.execute(
         select(
             ConflictRoutingRule.conflict_id,
@@ -77,9 +80,37 @@ def _load_routing_index(db: Session):
             ConflictRoutingRule.priority,
         )
     ).all()
+    conflict_iso3s: dict[int, set[str]] = {}
+    for row in db.execute(
+        select(Conflict.id, Conflict.primary_iso3, Conflict.secondary_iso3s)
+    ).all():
+        spans = {c.upper() for c in (row.secondary_iso3s or []) if c}
+        if row.primary_iso3:
+            spans.add(row.primary_iso3.upper())
+        if spans:
+            conflict_iso3s[row.id] = spans
     return build_routing_index(
-        [(r.conflict_id, r.rule_type, r.pattern, r.priority) for r in rules]
+        [(r.conflict_id, r.rule_type, r.pattern, r.priority) for r in rules],
+        conflict_iso3s,
     )
+
+
+def actor_names_for_crises(
+    db: Session, crisis_ids: list[int] | None = None
+) -> dict[int, list[str]]:
+    """crisis_id -> [actor.name, …] in one query. Passing `crisis_ids` scopes
+    it; omitting them loads every crisis."""
+    stmt = select(CrisisActor.crisis_id, Actor.name).join(
+        Actor, Actor.id == CrisisActor.actor_id
+    )
+    if crisis_ids is not None:
+        if not crisis_ids:
+            return {}
+        stmt = stmt.where(CrisisActor.crisis_id.in_(crisis_ids))
+    out: dict[int, list[str]] = defaultdict(list)
+    for r in db.execute(stmt).all():
+        out[r.crisis_id].append(r.name)
+    return out
 
 
 def _load_crisis_metadata(
@@ -95,14 +126,7 @@ def _load_crisis_metadata(
             select(Crisis.id, Crisis.country_iso3, Crisis.admin1_norm)
         ).all()
     }
-    actor_rows = db.execute(
-        select(CrisisActor.crisis_id, Actor.name)
-        .join(Actor, Actor.id == CrisisActor.actor_id)
-    ).all()
-    actors_by_crisis: dict[int, list[str]] = defaultdict(list)
-    for r in actor_rows:
-        actors_by_crisis[r.crisis_id].append(r.name)
-    return crisis_meta, actors_by_crisis
+    return crisis_meta, actor_names_for_crises(db)
 
 
 def _load_country_centroids(db: Session) -> dict[str, tuple[float, float]]:
