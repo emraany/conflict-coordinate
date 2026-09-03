@@ -22,7 +22,8 @@ Nothing is blocking. Everything below is optional or needs a browser.
 |---|---|---|
 | 1 | **Uptime monitor** on `/api/health` | a signup — catches a stalled pipeline that still returns HTTP 200, otherwise invisible for a week |
 | 2 | **Throttle-key check** | a second network (phone hotspot); one machine cannot tell a per-client bucket from a shared one |
-| 3 | **Railway deploy trigger** | connecting GitHub to Railway; until then backend deploys are manual |
+| 3 | **Railway deploy trigger** | installing the Railway GitHub App; until then backend deploys are manual |
+| 3b | **`backend/railway.json` expires 2026-12-01** | migrating to Railway IaC (`railway config migrate`). Dated, and it breaks both backend builds when it lands |
 | 4 | **E10 — `/conflicts/:slug` as a real page** | nothing. Worth the most now that there is a URL to share |
 | 5 | **E11 — forecasting** | nothing. Last open ML-roadmap item |
 | 6 | **Registry coverage** | 38 unnamed dots classed `armed_conflict` (BRA 26, NGA 11, IRQ 9, ECU 8…). No routing work reaches these — the registry has no conflict for those countries |
@@ -30,6 +31,16 @@ Nothing is blocking. Everything below is optional or needs a browser.
 1–3 are operational and small. 4 and 5 are portfolio polish. 6 is the only
 one that would change what the map *says*, and it is editorial work rather
 than engineering: writing registry entries, each with a citation.
+
+**3b is the only item with a deadline.** Railway's persisted `builder` for
+`api` and `ingest` is still `RAILPACK`; the dashboard reads "Dockerfile"
+because `backend/railway.json` overrides it at build time, not because
+anything is stored. Config-as-code is deprecated and stops working
+**2026-12-01**, at which point both services revert to Railpack and fail the
+way they did on first deploy — "No start command detected", never seeing the
+CMD. The `Builder` GraphQL enum has no `DOCKERFILE` value, so this cannot be
+fixed by setting a field; `railway config migrate` translates the file into
+the supported form.
 
 *All Phase C verifications are closed, including the confirming ingest
 (`ingest_runs` id 7, `ok=true`, 7m07s). Every figure below came from the

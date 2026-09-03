@@ -76,6 +76,15 @@ does *not* displace it, and the `Builder` GraphQL enum has no `DOCKERFILE`
 value; config-as-code does, and it lives in the repo rather than in dashboard
 state. A successful build logs `load build definition from backend/Dockerfile`.
 
+> **This expires 2026-12-01.** Config-as-code is deprecated. The stored
+> `builder` on both `api` and `ingest` is still `RAILPACK` — the dashboard
+> reads "Dockerfile" only because the file overrides it per build. When the
+> file stops being honoured, both services revert to Railpack and fail as
+> above. `railway config migrate` translates `railway.json` into the
+> supported authoring file; prefer `railway config pull` first so the
+> authoring file captures the project as it actually is, and `railway config
+> plan` before any `apply`.
+
 **Create the public domain only after a deployment has succeeded.** A domain
 generated against a service with no successful deploy stays broken: DNS
 resolves, the service is healthy, `targetPort` is right, and every request
