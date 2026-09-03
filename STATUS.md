@@ -1,4 +1,4 @@
-# Project status — 2026-09-02 (Phases A, B and C complete)
+# Project status — 2026-09-02 (Phases A, B, C and D complete)
 
 Audited against the running local stack (colima + `conflict_db` + API on
 :8000), not against the docs. Every figure below came from the database or a
@@ -6,15 +6,18 @@ live endpoint on that date; re-verify before acting on it (see the last
 section).
 
 **Phase A** (actor-aware dot naming, one four-week number), **Phase B**
-(a real recorded ingest, both failure guards exercised, weekly cron) and
-**Phase C** (violence classification, and the globe filter that shows it) are
-done. The dot count moved twice: 350 → 311 as the window advanced three weeks
+(a real recorded ingest, both failure guards exercised, weekly cron),
+**Phase C** (violence classification, and the globe filter that shows it) and
+**Phase D** (the region index — search by name instead of by eye) are done.
+The dot count moved twice: 350 → 311 as the window advanced three weeks
 in Phase B, then 311 → 293 when Phase C fixed a rollup bug that had been
-keeping regions on the globe on month-old counts. **Phase D is next.**
+keeping regions on the globe on month-old counts. **Only the optional
+Phase E remains.**
 
 *All Phase C verifications are closed, including the confirming ingest
 (`ingest_runs` id 7, `ok=true`, 7m07s). Every figure below came from the
-database after that run.*
+database after that run. Phase D touched no data — it is frontend only, and
+its own verification is noted under D9.*
 
 ---
 
@@ -28,7 +31,7 @@ database after that run.*
 | `/api/health` status | `"stale"` | **`"ok"`** |
 | Rows in `ingest_runs` | 0 — never written to | **4** (two ok, one failed, one interrupted) |
 | Scheduled ingest | none | **crontab, Tuesdays 06:00 UTC** |
-| Globe dots | 350 regions, 55 countries | **293 regions, 52 countries** |
+| Globe dots | 350 regions, 55 countries | **293 regions, 53 countries** |
 | Dots carrying a conflict name | 182 of 350 (52%) | **189 of 293 (65%)** |
 | Dots stating what kind of violence | none — the field didn't exist | **293: 198 armed, 74 criminal, 15 unrest, 6 unclear** |
 | Registry conflicts | 22, 13 with zero footprint cells | unchanged |
@@ -38,6 +41,7 @@ database after that run.*
 | DB size | 746 MB | **750 MB** |
 | Backend tests | none in repo | **11, passing** |
 | Frontend typecheck | `tsc -b` clean | clean |
+| Finding a named region on the globe | by eye only | **searchable — name, country, ISO3, conflict** |
 | Deployed anywhere | no | no |
 
 The largest dot on the globe is now `russia-belgorod` (1,701 events),
@@ -163,14 +167,15 @@ finally run end to end, and both are fixed:
   `conflict_id` no current rule justified. 2,942 stamps were cleared on the
   verifying run.
 
-### 4. You can't find anything on the globe
+### 4. ~~You can't find anything on the globe~~ — fixed in Phase D
 
 `pointsMerge={false}`, radius `0.34 + 0.1·log1p(events)`, click → dossier +
 fly-to, so every dot is its own object. At the default altitude of 2.4 with
-293 dots the clusters still collide. Phase C added the first filter — by kind
-of violence, which cuts the globe to 198 / 74 / 15 — but there is still **no
-search and no region list**. Hex view is a density read, not a disambiguator.
-That is Phase D.
+293 dots the clusters still collide, and hex view is a density read, not a
+disambiguator. Phase C added the first filter — by kind of violence, which
+cuts the globe to 198 / 74 / 15 — but a filter narrows; it does not locate.
+Phase D added the region index: a text way in that searches all 293 and puts
+the camera and the dossier where a click would.
 
 ### 5. Smaller seams
 
@@ -357,10 +362,46 @@ The one earlier attempt at this run was interrupted a minute in, before it
 reached the tail; it wrote nothing and left the orphan `ingest_runs` row
 noted in §5.
 
-### Phase D — findability (~1 day)
+### Phase D — findability ✅ **Done 2026-09-02**
 
-**D9. Search box + region list on the map page.**
-*Verify:* typing "Kharkiv" flies the globe there and opens the dossier.
+**D9. Search box + region list on the map page.** ✅
+`frontend/src/components/RegionIndex.tsx`, one commit (`f9c6b41`). A
+collapsible panel at the globe's top right — the only free screen edge —
+listing all 293 regions in the order `/api/globe` already returns them
+(four-week events, descending), searchable by region name, country, ISO3 and
+conflict name. Rows call the same handler a dot click does, so a hit inherits
+the existing fly-to and dossier for free.
+
+Smaller than it looked, for two reasons found while planning: the whole
+293-dot payload is already client-side, so this needed **no backend change of
+any kind** — no endpoint, no query, no index, no migration; and the fly-to
+was already an effect on the `selectedSlug` prop rather than on the click, so
+anything that sets it moves the camera. The only real work was lifting
+`classFilter` out of `Globe` into `MapPage` so the list and the globe agree
+on what is filtered.
+
+Two deliberate behaviours: the list searches all 293 regardless of the active
+class filter, and selecting a hit the filter is hiding resets the chips to
+`ALL` — searching "Rio" under `ARMED` and getting nothing would read as "Rio
+has no violence", which is false. And dashes are folded before matching:
+region names are all ASCII, but conflict names are not, so a typed hyphen
+would otherwise miss `Israel–Hamas War (Gaza)`.
+
+*Verified:* `tsc -b` and `npm run build` clean. The match function run over
+the live `/api/globe` payload: `Kharkiv` → exactly one hit
+(`ukraine-kharkiv`, 753 events, armed conflict), `russo` → 24 dots carrying
+*Russo-Ukrainian War*, ASCII `Israel-Hamas` → the two en-dashed Gaza-war
+dots, `Rio` → 4 including `brazil-rio-de-janeiro` (criminal, 135 events),
+nonsense → 0. Rendered against the running app: the panel clears the legend,
+the chip stack and the hex caveat, and rows read on-aesthetic. **Still open:**
+the five interactive checks (Enter flies the camera, keyboard nav, the filter
+reset, collapse persistence) have not been driven — the sandbox grants
+browsers read-only, so they need a human at the keyboard.
+
+*Deferred, as decisions rather than oversights:* alias matching — the 153
+rows in `admin1_aliases` ("Halab"→Aleppo, "Dacca"→Dhaka) would need a backend
+field, and bolt on later without reworking any of this; and a shareable URL
+for a selected region, which is E10's problem.
 
 ### Phase E — still open from the roadmaps (optional)
 
@@ -373,13 +414,13 @@ not done.
 clustering are built. Summarization was deliberately scoped out by the
 neutrality rules.
 
-**Definition of done:** A + B + C — **met**. The site is accurate,
-self-updating, and says true things about what it shows. D makes it usable;
-E is portfolio polish.
+**Definition of done:** A + B + C — **met**, and D on top of it. The site is
+accurate, self-updating, says true things about what it shows, and can now be
+navigated by name rather than by eye. E is portfolio polish.
 
 *The Phase C estimate was the least reliable one here, and it held up better
 than expected: ACLED's actor naming turned out consistent enough across all
-52 countries that a lexicon over it works. The residual risk is not naming
+53 countries that a lexicon over it works. The residual risk is not naming
 consistency but staleness — the actor bag comes from an archive ACLED
 embargoes ~12 months, while the event mix is the current window. A region
 whose war ended last year still carries its combatants. Every basis string
@@ -396,16 +437,16 @@ names both inputs so that tension is visible.*
 | ~~1~~ | ~~**Phase A** (A1–A3)~~ | ✅ Done. A2 turned out to be a no-op; the label diff caught two cross-border regressions before they shipped. |
 | ~~2~~ | ~~**Phase B** (B4–B6)~~ | ✅ Done. No plan mode was needed, as predicted. Running it surfaced two live bugs the code review could not have. |
 | ~~3~~ | ~~**Phase C** (C7–C8)~~ | ✅ Done in three commits, not two: checking the doc against the database first turned up the stale-rollup bug, which had to land before anything was classified. |
-| **4** | **Phase D** (D9) ← **next** | One small plan. |
-| 5 | E10, E11 | Separately, whenever. |
+| ~~4~~ | ~~**Phase D** (D9)~~ | ✅ Done in one commit, no backend change. The plan was right that it was small, and right about why. |
+| **5** | E10, E11 ← **next** | Optional. Separately, whenever. |
 
 **Prompt to open the next planning session after a context clear:**
 
-> Read `STATUS.md` and `CLAUDE.md`. Plan Phase D only. The numbers in
+> Read `STATUS.md` and `CLAUDE.md`. Plan Phase E only. The numbers in
 > STATUS.md are a 2026-09-02 snapshot — verify the claims against the live
 > database and code before planning, don't trust the doc.
 
-That last clause matters, and all three phases have now proved it: the
+That last clause matters, and all four phases have now proved it: the
 audit's A1 target (206 named dots) was unreachable, its A2 was a no-op, its
 A3 named the wrong pair of numbers, and its C7 premise — classify from actor
 names *plus event-type mix* — was half wrong, because the mix says nothing
@@ -419,8 +460,8 @@ caught by checking the doc against the database before writing code.
   plan's value is the context gathered while writing it.
 - **Clear between phases**, when the next one touches different code.
 - **Definitely clear before Phase D.** C left a lot of classifier output and
-  actor bags in context that D — a search box and a region list — doesn't
-  need. That clear is due now.
+  actor bags in context that D — a search box and a region list — didn't
+  need. Done; D was planned and built in its own session.
 
 ---
 
