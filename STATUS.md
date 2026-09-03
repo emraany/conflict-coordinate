@@ -393,10 +393,30 @@ the live `/api/globe` payload: `Kharkiv` → exactly one hit
 *Russo-Ukrainian War*, ASCII `Israel-Hamas` → the two en-dashed Gaza-war
 dots, `Rio` → 4 including `brazil-rio-de-janeiro` (criminal, 135 events),
 nonsense → 0. Rendered against the running app: the panel clears the legend,
-the chip stack and the hex caveat, and rows read on-aesthetic. **Still open:**
-the five interactive checks (Enter flies the camera, keyboard nav, the filter
-reset, collapse persistence) have not been driven — the sandbox grants
-browsers read-only, so they need a human at the keyboard.
+the chip stack and the hex caveat, and rows read on-aesthetic.
+
+**Driven by hand afterwards, and it found two things the checks above could
+not** (`8213b4c`):
+
+- **The arrow keys did nothing.** The handler was bound to the search input,
+  so it only ran while that input held focus — and clicking a row moves focus
+  to that row's `<button>`, which is exactly when you next want to press down.
+  The plan had ruled out a document listener as "a new class of thing"; that
+  was the wrong call, and it is one now, scoped to the panel being open, no
+  modifier held, and focus not outside the panel. Enter defers to a focused
+  button, which already turns Enter into its own click.
+- **Flying to a region is not the same as finding it.** `selectedSlug` only
+  ever moved the camera (`Globe.tsx:382`), so arriving at Rio de Janeiro put
+  you in front of 26 Brazilian dots with nothing marking which one you asked
+  for. D9's premise — "rows behave exactly like clicking a dot" — was true and
+  still insufficient: clicking a dot tells you which one you clicked, and
+  searching does not. The selected region now carries a slow ring in bone,
+  deliberately off the lethality ramp so it cannot be misread as a severity,
+  drawn from the unfiltered dot list and shown in hex view too.
+
+**Still open:** the two fixes have not themselves been confirmed on screen,
+and neither have collapse persistence or the filter-reset check. The sandbox
+grants browsers read-only, so they need a human at the keyboard.
 
 *Deferred, as decisions rather than oversights:* alias matching — the 153
 rows in `admin1_aliases` ("Halab"→Aleppo, "Dacca"→Dhaka) would need a backend
@@ -438,7 +458,8 @@ names both inputs so that tension is visible.*
 | ~~2~~ | ~~**Phase B** (B4–B6)~~ | ✅ Done. No plan mode was needed, as predicted. Running it surfaced two live bugs the code review could not have. |
 | ~~3~~ | ~~**Phase C** (C7–C8)~~ | ✅ Done in three commits, not two: checking the doc against the database first turned up the stale-rollup bug, which had to land before anything was classified. |
 | ~~4~~ | ~~**Phase D** (D9)~~ | ✅ Done in one commit, no backend change. The plan was right that it was small, and right about why. |
-| **5** | E10, E11 ← **next** | Optional. Separately, whenever. |
+| — | **Deploy** ← **next** | Not in this plan's numbering, and the largest remaining gap: the snapshot's last row still reads `Deployed anywhere: no`. See below. |
+| 5 | E10, E11 | Optional. E10 is worth more after a deploy — a shareable URL is worth little on localhost. |
 
 **Prompt to open the next planning session after a context clear:**
 
@@ -477,9 +498,15 @@ Not started: Railway (PostGIS ≥2 GB volume, API, cron `0 6 * * 2`),
 use a `postgis/postgis:17-3.5` client), the Vercel project and
 `VITE_API_URL`, and an uptime monitor on `/api/health`. See `DEPLOY.md`.
 
+**This is the next thing to do.** Phases A–D made the site accurate,
+self-updating, honest about what it shows, and navigable; none of that is
+visible to anyone. E is portfolio polish on an app no one can open.
+
 The local crontab from B6 is an **interim** measure and should be removed
 (`crontab -r`) once the Railway cron service runs — otherwise two schedulers
-ingest into two databases. `/api/health` is now worth pointing an uptime
+ingest into two databases. It is still installed as of 2026-09-03, alongside
+a leftover daily probe job (18:26, writing `~/.conflict-cron-probe.log`) from
+debugging B6 that can go with it. `/api/health` is now worth pointing an uptime
 monitor at: it distinguishes `ok`, `degraded` (last run failed, earlier
 success stands) and `stale` (no success within `STATUS_STALE_DAYS`).
 
@@ -487,9 +514,12 @@ Two gaps the deploy plan called for and didn't get:
 
 - **No rate limiting** anywhere in `backend/app/`. `/api/activity` clamps
   `limit` at 1000, but nothing throttles requests. A public URL with no auth
-  and no throttle.
-- **Nothing runs migrations on deploy.** The Dockerfile `CMD` is uvicorn only
-  — fine for launch, a footgun on every future migration.
+  and no throttle. Re-checked 2026-09-03: still nothing, and no `slowapi` in
+  `pyproject.toml`.
+- **Nothing runs migrations on deploy.** `backend/Dockerfile:34` is uvicorn
+  only — fine for launch, a footgun on every future migration.
+
+Both are repo-side work that can land before any account exists.
 
 ---
 
