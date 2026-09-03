@@ -102,8 +102,15 @@ Adding a real trigger needs the **Railway GitHub App installed** on the
 account, which cloning does not. A public repo builds fine without it, so the
 gap only shows up when you try to automate: `deploymentTriggerCreate` fails
 with *"no one in the project has access to it"* and `githubRepos` returns
-*Not Authorized*. Install it from the Railway dashboard (service → Settings →
-Source → connect GitHub), then:
+*Not Authorized*.
+
+The service's Settings → Source page is **not** where this is fixed — with the
+repo attached but invisible it offers only "Disconnect", and shows *"GitHub
+Repo not found"* under the branch selector. Install the app itself at
+**https://github.com/apps/railway-app**, granting it access to the repo (the
+bare `github.com/apps/railway` slug is not it). Confirm with
+`gh api /repos/<owner>/conflict-coordinate/hooks` — no webhooks means no
+integration. Then:
 
 ```bash
 railway api 'mutation($in: DeploymentTriggerCreateInput!){deploymentTriggerCreate(input:$in){id branch repository}}' \
