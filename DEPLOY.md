@@ -246,6 +246,16 @@ environment `production`:
 | `api` | repo `backend/`, Dockerfile | https://api-production-6e126.up.railway.app |
 | `ingest` | same image, `startCommand` override | cron `0 6 * * 2` |
 
+Vercel project `conflict-coordinate` (root directory `frontend/`, GitHub
+connected so pushes to `main` redeploy): **https://conflict-coordinate.vercel.app**.
+`CORS_ORIGINS` on the API lists that domain and the
+`-emraans-projects-b26e9b37` alias; an origin outside the list gets no
+`access-control-*` headers back, which is what a browser needs to refuse it.
+
+Unlike Railway, `vercel link` wires the GitHub integration on its own — the
+Railway services do not have a deploy trigger, so pushes to `main` rebuild the
+frontend but **not** the API or ingest.
+
 `DATABASE_URL` on both app services points at
 `postgres.railway.internal:5432` over Railway's private network rather than
 through the TCP proxy — the proxy exists for restores from a laptop, not for

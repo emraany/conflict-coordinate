@@ -42,7 +42,7 @@ its own verification is noted under D9.*
 | Backend tests | none in repo | **11, passing** |
 | Frontend typecheck | `tsc -b` clean | clean |
 | Finding a named region on the globe | by eye only | **searchable — name, country, ISO3, conflict** |
-| Deployed anywhere | no | no |
+| Deployed anywhere | no | **yes — [conflict-coordinate.vercel.app](https://conflict-coordinate.vercel.app)** |
 
 The largest dot on the globe is now `russia-belgorod` (1,701 events),
 correctly reading *Russo-Ukrainian War*. Before Phase A it was unnamed.
@@ -465,8 +465,8 @@ names both inputs so that tension is visible.*
 | ~~3~~ | ~~**Phase C** (C7–C8)~~ | ✅ Done in three commits, not two: checking the doc against the database first turned up the stale-rollup bug, which had to land before anything was classified. |
 | ~~4~~ | ~~**Phase D** (D9)~~ | ✅ Done in one commit, no backend change. The plan was right that it was small, and right about why. |
 | ~~5~~ | ~~**Pre-deploy hardening**~~ | ✅ Done 2026-09-03, no plan mode needed. Rate limiting, migrations on deploy, and the abandoned-run reaper. Tests 11 → 16. |
-| 6 | **Deploy** ← **next** | Not in this plan's numbering, and the largest remaining gap: the snapshot's last row still reads `Deployed anywhere: no`. Nothing repo-side blocks it now. See below. |
-| 7 | E10, E11 | Optional, and worth splitting — they share no code. E10 is worth more after a deploy; a shareable URL is worth little on localhost. |
+| ~~6~~ | ~~**Deploy**~~ | ✅ Done 2026-09-03. Railway (Postgres + API + weekly cron) and Vercel. The site is public. See below. |
+| 7 | E10, E11 ← **next** | Optional, and worth splitting — they share no code. E10 is now worth more: there is a shareable URL. |
 
 **Prompt to open the next planning session after a context clear:**
 
@@ -500,25 +500,50 @@ Plan phases 1–3 landed (`9b082c2`, `1e18206`, `b8eab47`): `backend/Dockerfile`
 `ADMIN_TOKEN` fail-fast, per-source failure isolation, the `sweep_dropped`
 guard, `ingest_runs`, and the real `/api/health`.
 
-Not started: Railway (PostGIS ≥2 GB volume, API, cron `0 6 * * 2`),
-`alembic upgrade head` + `pg_dump`/`pg_restore` of the 750 MB DB (PG16 → PG17,
-use a `postgis/postgis:17-3.5` client), the Vercel project and
-`VITE_API_URL`, and an uptime monitor on `/api/health`. See `DEPLOY.md`.
+**Done 2026-09-03. The site is live: https://conflict-coordinate.vercel.app**,
+backed by `https://api-production-6e126.up.railway.app`.
 
-**This is the next thing to do.** Phases A–D made the site accurate,
-self-updating, honest about what it shows, and navigable; none of that is
-visible to anyone. E is portfolio polish on an app no one can open.
+Railway project `conflict-coordinate` runs three services — `postgres`
+(`postgis/postgis:16-3.4`, 5 GB volume), `api` (repo `backend/`, Dockerfile,
+migrations on deploy) and `ingest` (same image, `startCommand` override, cron
+`0 6 * * 2`). The database was seeded by `pg_dump`/`pg_restore` from local:
+all 15 tables match row-for-row, `alembic_version` at `0014`, 563 MB restored.
+`/api/health` reports `ok` with **293 dots**, the same as local.
 
-The local crontab from B6 is an **interim** measure and should be removed
-(`crontab -r`) once the Railway cron service runs — otherwise two schedulers
-ingest into two databases. It is still installed as of 2026-09-03, alongside
-a leftover daily probe job (18:26, writing `~/.conflict-cron-probe.log`) from
-debugging B6 that can go with it. `/api/health` is now worth pointing an uptime
-monitor at: it distinguishes `ok`, `degraded` (last run failed, earlier
-success stands) and `stale` (no success within `STATUS_STALE_DAYS`).
+The first production ingest was exercised through the **real cron**, not the
+API route — schedule moved a few minutes ahead, watched fire, then restored:
+`ingest_runs` id 10, `ok=true`, 8m31s, with ACLED OAuth, UCDP, GDELT and
+ReliefWeb all reaching the network from Railway.
+
+Four things the runbook had wrong, all corrected in `DEPLOY.md` (`a7b66d0`):
+every PostGIS marketplace template is unusable (Railway's own is PG16 on an
+unpinned PostGIS; both PG17 ones declare **no volume**, so the database is
+wiped on redeploy); attaching a volume does not migrate the ephemeral data
+already written and Railway reports its usage as `0.0 GB` regardless;
+Railpack claims the build unless `backend/railway.json` pins the Dockerfile;
+and a domain generated before the first successful deploy is permanently
+dead — healthy service, correct `targetPort`, and a 404 from the edge that
+never forwards a request.
+
+The interim B6 crontab and its leftover 18:26 probe job were removed once the
+Railway cron was proven (backup: `~/.conflict-deploy/crontab.backup`).
+
+**Still open, both needing something a sandbox can't do:**
+
+- **An uptime monitor on `/api/health`** — needs a signup. It distinguishes
+  `ok`, `degraded` (last run failed, earlier success stands) and `stale` (no
+  success within `STATUS_STALE_DAYS`), so it catches a stall that still
+  returns HTTP 200. On a weekly cadence a broken pipeline is otherwise
+  invisible for a week.
+- **The throttle-key check** (below) — needs a second network.
+
+Note Railway services have **no GitHub deploy trigger**: `railway add --repo`
+does not wire one, so pushes to `main` rebuild the Vercel frontend but not the
+API or ingest. Deploy those with `serviceInstanceDeployV2`, or add a
+`deploymentTriggerCreate`.
 
 ~~Two gaps the deploy plan called for and didn't get.~~ **Both closed
-2026-09-03**, before any hosting account exists:
+2026-09-03**, and both since confirmed on the deployed stack:
 
 - ~~**No rate limiting.**~~ `app/rate_limit.py` + `SlowAPIMiddleware`, applied
   as a global default rather than per-endpoint so a new router can't ship
@@ -538,10 +563,16 @@ success stands) and `stale` (no success within `STATUS_STALE_DAYS`).
   longer matches. The ingest role overrides the CMD, so migrations run from
   exactly one place.
 
-**The one assumption to check once Railway is up:** the client-IP derivation
-assumes a single proxy in front of the app. With two, every visitor shares one
-bucket and the site throttles itself. `DEPLOY.md` §6 has the one-request check
-and the fix.
+Migrations-on-deploy is now confirmed in production: the API's deploy log
+shows `alembic upgrade head` running ahead of uvicorn on every release.
+
+**The one assumption still unchecked:** the client-IP derivation assumes a
+single proxy in front of the app. With two, every visitor shares one bucket
+and the site throttles itself under normal traffic. The deployed API does
+return `x-ratelimit-limit: 120` and a decrementing `x-ratelimit-remaining`,
+but one machine cannot tell a per-client bucket from a shared one — that
+needs a second network (a phone hotspot). `DEPLOY.md` §6 has the comparison
+and the fix (`hops[-2]`).
 
 ---
 
