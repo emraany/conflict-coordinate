@@ -1,15 +1,21 @@
-# Project status — 2026-09-02 (Phases A and B complete)
+# Project status — 2026-09-02 (Phases A, B and C complete)
 
 Audited against the running local stack (colima + `conflict_db` + API on
 :8000), not against the docs. Every figure below came from the database or a
 live endpoint on that date; re-verify before acting on it (see the last
 section).
 
-**Phase A** (actor-aware dot naming, one four-week number) and **Phase B**
-(a real recorded ingest, both failure guards exercised, weekly cron) are
-done. The figures below are post-ingest and differ substantially from the
-pre-Phase-A audit — most visibly the dot count, which fell 350 → 311 as the
-window advanced three weeks. **Phase C is next.**
+**Phase A** (actor-aware dot naming, one four-week number), **Phase B**
+(a real recorded ingest, both failure guards exercised, weekly cron) and
+**Phase C** (violence classification, and the globe filter that shows it) are
+done. The dot count moved twice: 350 → 311 as the window advanced three weeks
+in Phase B, then 311 → 293 when Phase C fixed a rollup bug that had been
+keeping regions on the globe on month-old counts. **Phase D is next.**
+
+*One Phase C verification is still open: the classification has not yet run
+through a full unattended ingest — the confirming run was interrupted before
+it reached the tail. Next Tuesday's cron closes it. Everything else below was
+re-checked against the database.*
 
 ---
 
@@ -21,16 +27,17 @@ window advanced three weeks. **Phase C is next.**
 | Newest aggregate week in DB | 2026-08-01 | **2026-08-22** |
 | Newest event of any kind | 2026-08-14 | **2026-09-02** (GDELT, same-day) |
 | `/api/health` status | `"stale"` | **`"ok"`** |
-| Rows in `ingest_runs` | 0 — never written to | **2** (one failed, one ok) |
+| Rows in `ingest_runs` | 0 — never written to | **3** (one ok, one failed, one interrupted) |
 | Scheduled ingest | none | **crontab, Tuesdays 06:00 UTC** |
-| Globe dots | 350 regions, 55 countries | **311 regions, 53 countries** |
-| Dots carrying a conflict name | 182 of 350 (52%) | **190 of 311 (61%)** |
+| Globe dots | 350 regions, 55 countries | **293 regions, 52 countries** |
+| Dots carrying a conflict name | 182 of 350 (52%) | **189 of 293 (65%)** |
+| Dots stating what kind of violence | none — the field didn't exist | **293: 196 armed, 74 criminal, 15 unrest, 8 unclear** |
 | Registry conflicts | 22, 13 with zero footprint cells | unchanged |
 | `crisis_events` | 245,321 rows, 143,871 routed | **268,029 rows, 153,889 routed** |
 | Events routed across a border | 2,792 | **0** |
 | `entity_mentions` (NER) | 985,998 | **1,038,243** |
 | DB size | 746 MB | **750 MB** |
-| Backend tests | none in repo | **5, passing** |
+| Backend tests | none in repo | **11, passing** |
 | Frontend typecheck | `tsc -b` clean | clean |
 | Deployed anywhere | no | no |
 
@@ -110,28 +117,36 @@ database; the conflict-vs-crime split (below) is legible from the same actor
 strings; LLM-authored prose is barred by the neutrality rules; and
 `CLAUDE.md` scopes LLM-API features out entirely.
 
-### 2. It shows violent events, but calls itself a conflict map
+### 2. ~~It shows violent events, but calls itself a conflict map~~ — addressed in Phase C
 
 ```
 BRA 26   NGA 23   MEX 20   COL 20   UKR 16   SOM 15
-YEM 14   RUS 12   SDN 12   SYR 11   MMR 10   IRN  9
+YEM 14   SDN 12   RUS 11   SYR 11   MLI  9   MMR  9
 ```
 
-Brazil still outranks Ukraine on dot count. Iran, India, Ecuador and Honduras
-appear via riots and criminal violence. That is the documented design, but it
-is the widest gap between what renders and what the project claims to be.
-**121 of 311 dots carry no conflict name** (was 168 of 350), so their dossier
-section 03 is empty. Phase A closed the share that was a routing bug; what is
-left is genuine registry coverage:
+Brazil still outranks Ukraine on dot count, and always will: a dot is a
+region with violence, and Brazil has more regions with violence than Ukraine
+has regions. What changed is that the map no longer implies they are the same
+phenomenon. Every dot now states its kind, and Brazil's 26 read
+**criminal violence** while Ukraine's 16 read **armed conflict**.
+
+Iran's and India's appearances were mostly the stale-rollup bug (§6), not
+riots: nine Iranian dots and `india-bihar` were standing on month-old counts
+with nothing violent in the current window at all.
+
+**104 of 293 dots still carry no conflict name**, so their dossier section 03
+is empty — but 67 of those 104 now say something about themselves anyway
+(48 criminal, 15 unrest, 4 unclear). The real registry-coverage gap is the
+remaining **37 unnamed dots classed armed_conflict**:
 
 ```
-BRA 26   NGA 11   IRN 9   IRQ 9   ECU 8   HND 7   KEN 7   IND 6
+BRA 26   NGA 11   IRQ 9   ECU 8   HND 6   KEN 6   COD 4   GTM 3
 ```
 
 The largest unnamed dots are `brazil-rio-de-janeiro` (135 events),
-`brazil-bahia` (108), `brazil-pernambuco` (100), `ecuador-guayas` (88). None
-of those countries has a registry conflict at all — that is Phase C's
-subject, and no amount of routing work reaches it.
+`brazil-bahia` (108), `brazil-pernambuco` (100), `ecuador-guayas` (88) — all
+four now labelled criminal violence, which is what they are. None of those
+countries has a registry conflict, and no routing work reaches that.
 
 ### 3. ~~Nothing keeps the data fresh~~ — resolved in Phase B
 
@@ -152,16 +167,17 @@ finally run end to end, and both are fixed:
 ### 4. You can't find anything on the globe
 
 `pointsMerge={false}`, radius `0.34 + 0.1·log1p(events)`, click → dossier +
-fly-to, so every dot is its own object. But at the default altitude of 2.4
-with 311 dots the clusters still collide, and there is **no search, no region
-list, no filter** on the map page. Hex view is a density read, not a
-disambiguator.
+fly-to, so every dot is its own object. At the default altitude of 2.4 with
+293 dots the clusters still collide. Phase C added the first filter — by kind
+of violence, which cuts the globe to 196 / 74 / 15 — but there is still **no
+search and no region list**. Hex view is a density read, not a disambiguator.
+That is Phase D.
 
 ### 5. Smaller seams
 
 - ~~**Two different 4-week numbers in one dossier.**~~ Fixed in Phase A. The
   header, the `BREAKDOWN` bars and `stats.recent_4w_events` now agree by
-  construction; verified equal across all 311 dots. The audit misread which
+  construction; verified equal across all dots. The audit misread which
   two numbers collided — see A3 below.
 - **ReliefWeb section is thin** — 185 reports across 53 countries, roughly
   three per country, country-scoped rather than region-scoped. Not broken;
@@ -172,7 +188,19 @@ disambiguator.
 - **Nothing reaps an interrupted run.** A killed ingest leaves an
   `ingest_runs` row with `finished_at` NULL forever. `/api/health` is
   unaffected (it keys off the last *successful* run), so this is cosmetic —
-  but a long-running deployment will accumulate them.
+  but a long-running deployment will accumulate them. Row id 6 is one, left
+  by the interrupted Phase C verification run.
+
+### 6. ~~Dots stood on counts no current week justified~~ — fixed in Phase C
+
+`_refresh_crisis_activity_rollups` updated only crises that appeared in its
+aggregate CTE, and zeroed only those with *no* weekly rows at all in the
+window. A region whose violence stopped but whose protests continued
+satisfied neither test, so it kept a month-old violent count and stayed on
+the globe. 18 of 311 dots were in that state — nine Iranian, plus
+`india-bihar`, `myanmar-yangon` and `afghanistan-panjshir`; their dossiers
+read "4 weeks to 2026-07-25" against an aggregate frontier of 2026-08-22.
+One statement now recomputes every crisis over a LEFT JOIN. Globe: 311 → 293.
 
 ---
 
@@ -271,21 +299,59 @@ Tuesday leaves no new `ingest_runs` row, that is the cause** — System
 Settings → Privacy & Security → Full Disk Access → add `/usr/sbin/cron`.
 Undo the schedule entirely with `crontab -r`.
 
-### Phase C — fix the framing (~2–3 days; the real work)
+### Phase C — fix the framing ✅ **Done 2026-09-02**
 
-**C7. Classify violence type per region** — `armed_conflict` /
-`criminal_violence` / `unrest`, from actor names plus event-type mix
-(`Al Shabaab` vs `Unidentified Gang (Haiti)` vs `Taxi Drivers`). Compute in
-the rollup, store on `crises`.
-*Verify:* hand-check 20 dots — Ukraine armed, Rio criminal, Iran unrest — and
-confirm disagreements are genuinely ambiguous rather than wrong.
+**C0. Stale rollups.** ✅ Found while checking the doc against the database,
+before writing any classifier — 18 of the 311 dots had no qualifying violence
+in the current window at all. Detail in §6 above. Fixed first, so nothing was
+classified off a month-old count.
 
-**C8. Surface it on the globe** — distinct colour family or a filter toggle.
-*Verify:* Brazil and Ukraine no longer read as the same phenomenon; the 168
-unnamed dots now convey something beyond "NO NAMED CONFLICT".
+**C7. Classify violence type per region.** ✅ `app/conflicts/violence_class.py`
+— pure, no SQLAlchemy, like `routing.py` — plus migration `0014`
+(`crises.violence_class`, `violence_class_basis`) and a `_classify_violence`
+step in the ingest tail beside the rollup.
 
-This closes the gap between "map of violent events" and "conflict map" — the
-step that changes what the project is.
+The audit's premise ("actor names plus event-type mix") was half right. Mix
+carries nothing on the criminal/armed axis: **80% of Rio's current window is
+Battles**, because ACLED codes a gang-versus-police shootout as
+`Battles / Armed clash`, exactly like a frontline engagement. Only the actor
+names separate them, and two ACLED conventions defeat the obvious patterns —
+state police are filed as `Military Forces of Brazil (2023-) Military Police`,
+and `Unidentified Armed Group (X)` is a filler for an unknown perpetrator.
+Both are pinned by tests. Criminal actors outrank state forces in the decision
+order, because armies are deployed against cartels — that is what keeps
+Sinaloa from reading as a war.
+
+`SUB_EVENT_TYPE` was evaluated and **deliberately deferred**: it is in the
+cached xlsx and would sharpen unrest (`Mob violence` vs `Violent
+demonstration`), but Rio and Donetsk both show `Armed clash`, so it does not
+touch the axis that mattered. Not worth a migration and a re-ingest.
+
+*Verified:* 293 dots — **196 armed, 74 criminal, 15 unrest, 8 unclear**.
+Hand-checked 20 spanning all four classes: 16 clean, 4 arguable, none wrong.
+`palestine-west-bank` reads armed off Israeli forces though 85% of its window
+is riots; `colombia-atlantico` reads criminal off Gulf Clan, which ACLED types
+a political militia; `iraq-al-basrah` and `nigeria-lagos` fall to unclear just
+under the battle-share threshold. Every label carries a derived basis string
+quoting its own evidence, so a reader sees those tensions rather than taking
+the label on faith. 11 backend tests pass.
+
+**C8. Surface it on the globe.** ✅ Colour stays lethality and size stays
+event count — one variable per channel is why the legend is readable — so the
+class reads through filtering and text. A chip row above the existing globe
+controls filters to armed / criminal / unrest, and dots, hex bins and pulse
+rings all follow it. Tooltip and dossier header carry a bracketed class; the
+dossier chip's `title` is the basis. `UNCLASSIFIED` renders dim beside
+`NO NAMED CONFLICT` — the two things the map declines to guess at.
+*Verified:* `tsc -b` and `npm run build` clean; `/api/globe` and
+`/api/crises/{slug}` both carry the class and its basis.
+
+*Still open:* the classification has not run through a full unattended ingest.
+The confirming run was interrupted about a minute in, before it reached the
+tail — nothing was written, and it left the orphan `ingest_runs` row noted in
+§5. Next Tuesday's cron closes this; if the class counts hold near
+196/74/15/8 and no dot flips class without its actor bag changing, C7 is
+confirmed end to end.
 
 ### Phase D — findability (~1 day)
 
@@ -303,13 +369,17 @@ not done.
 clustering are built. Summarization was deliberately scoped out by the
 neutrality rules.
 
-**Definition of done:** A + B + C. After those the site is accurate,
+**Definition of done:** A + B + C — **met**. The site is accurate,
 self-updating, and says true things about what it shows. D makes it usable;
 E is portfolio polish.
 
-*Least reliable estimate here is Phase C. Classification quality depends on
-how consistent ACLED's actor naming is across all 55 countries, and only five
-were spot-checked.*
+*The Phase C estimate was the least reliable one here, and it held up better
+than expected: ACLED's actor naming turned out consistent enough across all
+52 countries that a lexicon over it works. The residual risk is not naming
+consistency but staleness — the actor bag comes from an archive ACLED
+embargoes ~12 months, while the event mix is the current window. A region
+whose war ended last year still carries its combatants. Every basis string
+names both inputs so that tension is visible.*
 
 ---
 
@@ -321,35 +391,32 @@ were spot-checked.*
 |---|---|---|
 | ~~1~~ | ~~**Phase A** (A1–A3)~~ | ✅ Done. A2 turned out to be a no-op; the label diff caught two cross-border regressions before they shipped. |
 | ~~2~~ | ~~**Phase B** (B4–B6)~~ | ✅ Done. No plan mode was needed, as predicted. Running it surfaced two live bugs the code review could not have. |
-| **3** | **Phase C** (C7–C8) ← **next** | One plan, two commits. Plan together (how you classify determines what the UI can show); build C7, verify the 20 hand-checks, *then* C8. |
-| 4 | **Phase D** (D9) | One small plan. |
+| ~~3~~ | ~~**Phase C** (C7–C8)~~ | ✅ Done in three commits, not two: checking the doc against the database first turned up the stale-rollup bug, which had to land before anything was classified. |
+| **4** | **Phase D** (D9) ← **next** | One small plan. |
 | 5 | E10, E11 | Separately, whenever. |
 
 **Prompt to open the next planning session after a context clear:**
 
-> Read `STATUS.md` and `CLAUDE.md`. Plan Phase C only. The numbers in
-> STATUS.md are a 2026-09-02 post-ingest snapshot — verify the claims against
-> the live database and code before planning, don't trust the doc.
+> Read `STATUS.md` and `CLAUDE.md`. Plan Phase D only. The numbers in
+> STATUS.md are a 2026-09-02 snapshot — verify the claims against the live
+> database and code before planning, don't trust the doc.
 
-That last clause matters, and Phases A and B both proved it: the audit's
-A1 target (206 named dots) was unreachable, its A2 was a no-op, and its A3
-named the wrong pair of numbers. Every one of those was caught by checking
-the doc against the database before writing code.
-
-**One caveat specific to Phase C.** C7's verify ("hand-check 20 dots") was
-written against a 350-dot globe. The set is now 311 and its composition
-shifted — 80 out, 41 in — so pick the 20 fresh rather than reusing any list.
-The four regions the audit named as examples (Ukraine armed, Rio criminal,
-Iran unrest) are all still dots.
+That last clause matters, and all three phases have now proved it: the
+audit's A1 target (206 named dots) was unreachable, its A2 was a no-op, its
+A3 named the wrong pair of numbers, and its C7 premise — classify from actor
+names *plus event-type mix* — was half wrong, because the mix says nothing
+about the criminal/armed split. Phase C also found a bug worth 18 dots that
+no amount of reading the doc would have surfaced. Every one of those was
+caught by checking the doc against the database before writing code.
 
 **Rhythm:**
 
 - **Don't clear between planning and implementing the same phase** — the
   plan's value is the context gathered while writing it.
 - **Clear between phases**, when the next one touches different code.
-- **Definitely clear before Phase C.** A and B left a lot of ingest output and
-  label diffs in context that C doesn't need, and C most deserves a clean
-  head. That clear is due now.
+- **Definitely clear before Phase D.** C left a lot of classifier output and
+  actor bags in context that D — a search box and a region list — doesn't
+  need. That clear is due now.
 
 ---
 
@@ -413,23 +480,40 @@ cd ../frontend && npm run dev        # :5173
 
 curl -s localhost:8000/api/health | python3 -m json.tool
 
-# dots, and how many carry a conflict name
+# dots, how many carry a conflict name, and what kind of violence they are
 curl -s localhost:8000/api/globe | python3 -c "
+import json,sys,collections; d=json.load(sys.stdin)
+print(len(d), 'dots,', sum(1 for x in d if x.get('conflict')), 'named')
+print(collections.Counter(x['violence_class'] for x in d))"
+
+# one region's label and the evidence behind it (C7)
+curl -s localhost:8000/api/crises/brazil-rio-de-janeiro | python3 -c "
 import json,sys; d=json.load(sys.stdin)
-print(len(d), 'dots,', sum(1 for x in d if x.get('conflict')), 'named')"
+print(d['violence_class'], '|', d['violence_class_basis'])"
 
 # the three four-week numbers must all agree (A3)
 curl -s localhost:8000/api/crises/ukraine-donetsk | python3 -c "
 import json,sys; d=json.load(sys.stdin)
 print(d['violence_4w_events'], sum(a['events'] for a in d['activity']), d['stats']['recent_4w_events'])"
 
-cd ../backend && uv run pytest -q          # 5 tests, routing guard
+cd ../backend && uv run pytest -q          # 11 tests: routing guard + classifier
 crontab -l                                  # the weekly ingest
 
 docker exec conflict_db psql -U conflict -d conflict \
   -c "select id, ok, trigger, finished_at from ingest_runs order by id;" \
   -c "select max(week_start) from crisis_intensity_weekly;" \
   -c "select count(*) filter (where conflict_id is not null), count(*) from crisis_events;"
+
+# must return 0 — no dot standing on a window with no qualifying violence (C0)
+docker exec conflict_db psql -U conflict -d conflict -c "
+with latest as (select max(week_start) w from crisis_intensity_weekly)
+select count(*) from crises c
+where (c.violence_4w_events>=5 or c.violence_4w_fatalities>=5)
+  and not exists (select 1 from crisis_intensity_weekly w, latest
+                  where w.crisis_id=c.id
+                    and w.week_start > latest.w - interval '4 weeks'
+                    and w.event_type in ('Battles','Violence against civilians',
+                                         'Explosions/Remote violence','Riots'));"
 
 # must return 0 — no event routed outside its conflict's own geography
 docker exec conflict_db psql -U conflict -d conflict -c "
