@@ -2,8 +2,15 @@ import { useEffect, useState } from "react";
 
 import { api } from "../api/client";
 import { Brief } from "../components/Brief";
-import { Globe, lethalityColor } from "../components/Globe";
+import {
+  Globe,
+  LS_CLASSFILTER,
+  lethalityColor,
+  readLocal,
+} from "../components/Globe";
+import type { ClassFilter } from "../components/Globe";
 import { RegionDetailPanel } from "../components/RegionDetailPanel";
+import { RegionIndex } from "../components/RegionIndex";
 import { colors, fonts, space } from "../styles/tokens";
 import type { GlobeDot, ViolenceClass } from "../types";
 import { VIOLENCE_CLASS_LABEL } from "../components/dossier";
@@ -127,6 +134,11 @@ export function MapPage() {
   const [dots, setDots] = useState<GlobeDot[]>([]);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Owned here, not in Globe, so the region index and the globe filter the
+  // same set.
+  const [classFilter, setClassFilter] = useState<ClassFilter>(() =>
+    readLocal<ClassFilter>(LS_CLASSFILTER, "all"),
+  );
 
   useEffect(() => {
     api
@@ -134,6 +146,22 @@ export function MapPage() {
       .then(setDots)
       .catch(() => setError("Unable to reach API"));
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(LS_CLASSFILTER, classFilter);
+  }, [classFilter]);
+
+  // The index searches every region, so a hit can be one the class filter is
+  // currently hiding. Clear the filter rather than fly the camera to a dot
+  // that will not be drawn. A globe click can never trip this — a dot you can
+  // click already passes the filter.
+  const handleSelect = (slug: string) => {
+    setSelectedSlug(slug);
+    const dot = dots.find((d) => d.slug === slug);
+    if (dot && classFilter !== "all" && dot.violence_class !== classFilter) {
+      setClassFilter("all");
+    }
+  };
 
   const namedCount = dots.filter((d) => d.conflict !== null).length;
   const latestWeek = dots.reduce<string | null>(
@@ -176,10 +204,17 @@ export function MapPage() {
         <div style={{ flex: 1, position: "relative", minWidth: 0 }}>
           <Globe
             dots={dots}
-            onSelect={setSelectedSlug}
+            onSelect={handleSelect}
             selectedSlug={selectedSlug}
+            classFilter={classFilter}
+            onSetClassFilter={setClassFilter}
           />
           <Legend latestWeek={latestWeek} dots={dots} />
+          <RegionIndex
+            dots={dots}
+            selectedSlug={selectedSlug}
+            onSelect={handleSelect}
+          />
           {error && (
             <div
               style={{

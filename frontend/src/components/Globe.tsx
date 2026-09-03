@@ -10,6 +10,8 @@ interface Props {
   dots: GlobeDot[];
   onSelect: (slug: string) => void;
   selectedSlug: string | null;
+  classFilter: ClassFilter;
+  onSetClassFilter: (next: ClassFilter) => void;
 }
 
 interface PointDatum extends GlobeDot {
@@ -37,7 +39,7 @@ const CLASS_FILTERS = [
   { key: "criminal_violence", label: "CRIMINAL" },
   { key: "unrest", label: "UNREST" },
 ] as const;
-type ClassFilter = (typeof CLASS_FILTERS)[number]["key"];
+export type ClassFilter = (typeof CLASS_FILTERS)[number]["key"];
 
 const COLOR_TEXTURE = "//unpkg.com/three-globe/example/img/earth-blue-marble.jpg";
 const BUMP_TEXTURE = "//unpkg.com/three-globe/example/img/earth-topology.png";
@@ -46,7 +48,7 @@ const LS_TEXTURE = "cc.globe.texture";
 const LS_AUTOROTATE = "cc.globe.autoRotate";
 const LS_BORDERS = "cc.globe.borders";
 const LS_VIEWMODE = "cc.globe.viewMode";
-const LS_CLASSFILTER = "cc.globe.classFilter";
+export const LS_CLASSFILTER = "cc.globe.classFilter";
 
 // Floor is generous: the smallest qualifying region still has to be findable
 // and clickable on a rotating globe.
@@ -96,7 +98,7 @@ function intensityColor(weight: number): string {
   return rampColor(Math.log1p(weight) / 8);
 }
 
-function readLocal<T extends string>(key: string, fallback: T): T {
+export function readLocal<T extends string>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
   const v = window.localStorage.getItem(key);
   return (v as T) ?? fallback;
@@ -260,7 +262,13 @@ function GlobeControlChips({
   );
 }
 
-export function Globe({ dots, onSelect, selectedSlug }: Props) {
+export function Globe({
+  dots,
+  onSelect,
+  selectedSlug,
+  classFilter,
+  onSetClassFilter,
+}: Props) {
   const ref = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const monoDataUrlRef = useRef<string | null>(null);
@@ -277,9 +285,6 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
   );
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     readLocal<ViewMode>(LS_VIEWMODE, "dots"),
-  );
-  const [classFilter, setClassFilter] = useState<ClassFilter>(() =>
-    readLocal<ClassFilter>(LS_CLASSFILTER, "all"),
   );
   const [activeTextureUrl, setActiveTextureUrl] = useState<string>(COLOR_TEXTURE);
   const [countriesGeo, setCountriesGeo] = useState<object[]>([]);
@@ -370,11 +375,6 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
   useEffect(() => {
     window.localStorage.setItem(LS_VIEWMODE, viewMode);
   }, [viewMode]);
-
-  // Persist the violence-class filter.
-  useEffect(() => {
-    window.localStorage.setItem(LS_CLASSFILTER, classFilter);
-  }, [classFilter]);
 
   // Fly to selected conflict.
   useEffect(() => {
@@ -549,7 +549,7 @@ export function Globe({ dots, onSelect, selectedSlug }: Props) {
 
       <GlobeControlChips
         classFilter={classFilter}
-        onSetClassFilter={setClassFilter}
+        onSetClassFilter={onSetClassFilter}
         textureMode={textureMode}
         autoRotate={autoRotate}
         showBorders={showBorders}
