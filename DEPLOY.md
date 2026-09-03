@@ -83,22 +83,53 @@ cd backend
 DATABASE_URL='postgresql://…railway…' uv run alembic upgrade head
 
 # Dump local data. Use a client matching the REMOTE major version — a PG16
-# pg_dump cannot feed a PG17 server.
-docker run --rm -v "$PWD:/out" --network host postgis/postgis:17-3.5 \
-  pg_dump -h localhost -U conflict -d conflict \
-  --data-only --no-owner --no-privileges -Fc -f /out/seed.dump
+# pg_dump cannot feed a PG17 server. The client needs PostGIS only in the
+# server, not in itself, so use plain `postgres:17-alpine`: it is multi-arch,
+# while `postgis/postgis:17-3.5` publishes no arm64 build and will not run on
+# an Apple Silicon machine.
+#
+# The three restrictions are all load-bearing (see below):
+docker run --rm -e PGPASSWORD=conflict -v "$OUT:/out" --network host postgres:17-alpine \
+  pg_dump -h 127.0.0.1 -p 5432 -U conflict -d conflict \
+  --data-only --no-owner --no-privileges \
+  --schema=public \
+  --exclude-table-data=spatial_ref_sys \
+  --exclude-table-data=alembic_version \
+  -Fc -f /out/seed.dump
 
-docker run --rm -v "$PWD:/out" postgis/postgis:17-3.5 \
+docker run --rm -v "$OUT:/out" --network host postgres:17-alpine \
   pg_restore -d 'postgresql://…railway…' --data-only --no-owner /out/seed.dump
 ```
 
+Write `$OUT` to a path under `$HOME`. Colima mounts only `/Users/<you>` into
+its VM, so a `-v` target anywhere else (`/tmp`, a scratch dir) silently lands
+*inside the VM* and the host sees no file — with pg_dump still exiting 0.
+
+Why each restriction is needed — all three were confirmed by restoring into a
+scratch PG17 + PostGIS 3.5 before any remote database existed:
+
+- `--schema=public` drops the `tiger` and `topology` schemas. The PostGIS image
+  enables `postgis_topology` and `postgis_tiger_geocoder`, whose config tables
+  ship their own seed rows; the app touches none of them.
+- `--exclude-table-data=spatial_ref_sys` — PostGIS marks that table with
+  `pg_extension_config_dump`, so its ~8.5k rows *are* dumped, and a fresh
+  PostGIS database already has them. Restoring collides on every row and
+  overwrites 3.5's SRID definitions with 3.4's.
+- `--exclude-table-data=alembic_version` — step 2 already stamped the revision
+  by migrating, so the dumped row is a duplicate-key error on restore.
+
+Sequences need no special handling: `--data-only` emits `SEQUENCE SET` entries,
+so the next ingest picks up after the restored ids rather than colliding.
+
 Restore into a scratch database first if anything in the dump looks unexpected.
+Wait for a real connection, not `pg_isready` — during initdb the entrypoint runs
+a temporary server that answers `pg_isready` and then drops the connection.
 
 ## 6. Verify
 
 ```bash
 curl https://<api>.up.railway.app/api/health     # status, aggregate week, dots
-curl https://<api>.up.railway.app/api/globe | jq length   # ~350
+curl https://<api>.up.railway.app/api/globe | jq length   # 293 as of 2026-09-03
 ```
 
 Then trigger one ingest manually before trusting the schedule (redeploy the
