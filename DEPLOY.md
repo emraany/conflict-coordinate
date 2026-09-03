@@ -11,13 +11,46 @@ globe is built on cannot be fresher than that.
 
 ## 1. Database
 
-Deploy the **PostGIS** template (PostgreSQL + PostGIS 3.5), not plain Postgres.
 PostGIS is load-bearing, not decorative: migration `0001` runs
 `CREATE EXTENSION postgis`, `admin1_polygons` stores MULTIPOLYGON geometry, and
 UCDP/GDELT fall back to `ST_Contains` point-in-polygon lookups to resolve an
-admin1 when a name doesn't match.
+admin1 when a name doesn't match. Plain Postgres will not do.
 
-Give the volume **≥ 2 GB** — the seed dump is ~750 MB before WAL and growth.
+**Don't use a marketplace template.** Checked 2026-09-03: Railway's own
+`postgis` template runs `postgis/postgis:16-master` — PostgreSQL **16**, and a
+PostGIS pinned to nothing. The two PG17 templates (`postgis-17`,
+`postgis-spatial-database`) declare **no volume at all**, so the database is
+wiped on every redeploy. Create the service from an explicit image instead:
+
+```bash
+railway init --name conflict-coordinate
+railway add --service postgres \
+  --image postgis/postgis:16-3.4 \
+  --variables POSTGRES_USER=conflict \
+  --variables POSTGRES_PASSWORD="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')" \
+  --variables POSTGRES_DB=conflict \
+  --variables PGDATA=/var/lib/postgresql/data/pgdata
+
+railway service postgres          # link, or the next command panics
+railway volume add -m /var/lib/postgresql/data
+railway tcp-proxy create --port 5432 -s postgres   # needed to restore from your laptop
+```
+
+`16-3.4` matches local dev exactly, so the seed restore is same-major and
+needs no cross-version handling. `PGDATA` must be a *subdirectory* of the
+mount: the volume root is not empty, and initdb refuses to use it.
+
+Two things that bite here:
+
+- **Attach the volume before trusting any data.** A service created without
+  one starts on ephemeral disk, and attaching a volume does not migrate it —
+  it takes effect on the next deploy. Redeploy, then confirm persistence for
+  real: write a row, `railway deployment redeploy`, read it back. Railway's
+  reported volume usage rounds to `0.0 GB` at this size, so it proves nothing.
+- The CLI's `railway volume list` printed "No volumes found" for a volume that
+  existed and was mounted. `railway status` and the GraphQL API both showed it.
+
+Volume default is 5 GB, comfortably over the ~750 MB seed plus WAL and growth.
 
 ## 2. API service
 
@@ -28,6 +61,34 @@ Give the volume **≥ 2 GB** — the seed dump is ~750 MB before WAL and growth.
   against a schema the code no longer matches — Railway will restart-loop and
   the build logs name the failure. The cron service overrides the CMD, so
   migrations run from this service only.
+
+```bash
+railway add --service api --repo <owner>/conflict-coordinate --branch main
+# rootDirectory is not settable via a CLI flag — use the API:
+railway api 'mutation($sid:String!,$eid:String,$in:ServiceInstanceUpdateInput!){serviceInstanceUpdate(serviceId:$sid,environmentId:$eid,input:$in)}' \
+  --raw-var sid=<serviceId> --raw-var eid=<environmentId> --var in='{"rootDirectory":"backend"}'
+```
+
+**`backend/railway.json` is what selects the Dockerfile.** Without it Railway's
+autodetect (Railpack) claims the service and dies on "No start command
+detected" — it never sees the CMD. Setting `dockerfilePath` through the API
+does *not* displace it, and the `Builder` GraphQL enum has no `DOCKERFILE`
+value; config-as-code does, and it lives in the repo rather than in dashboard
+state. A successful build logs `load build definition from backend/Dockerfile`.
+
+**Create the public domain only after a deployment has succeeded.** A domain
+generated against a service with no successful deploy stays broken: DNS
+resolves, the service is healthy, `targetPort` is right, and every request
+still returns Railway's `{"status":"error","code":404,"message":"Application
+not found"}` — with an empty `railway logs --http`, because the edge never
+forwards anything. Setting `targetPort` and redeploying does not repair it.
+Delete the domain and generate a new one; it binds immediately. Note this
+changes the hostname, so set `VITE_API_URL` *after* the domain is known good.
+
+Creating a service with `--repo` does **not** wire the GitHub deploy trigger,
+so pushes will not build. Trigger one deploy explicitly with
+`serviceInstanceDeployV2(serviceId:, environmentId:)`, and add a
+`deploymentTriggerCreate` if you want auto-deploy on push.
 
 Variables:
 
@@ -58,6 +119,24 @@ Same repo and Dockerfile as the API — one image, two roles.
 - Same variables as the API. `INGEST_SCHEDULE_TIME` stays empty: the in-process
   scheduler is the wrong tool here and would double-run.
 
+Both are set in one call, alongside the same `rootDirectory`/`dockerfilePath`
+as the API — `startCommand` is what overrides the image's CMD, which is why
+migrations run from the API role only:
+
+```bash
+railway api 'mutation($sid:String!,$eid:String,$in:ServiceInstanceUpdateInput!){serviceInstanceUpdate(serviceId:$sid,environmentId:$eid,input:$in)}' \
+  --raw-var sid=<ingestServiceId> --raw-var eid=<environmentId> \
+  --var in='{"rootDirectory":"backend","dockerfilePath":"Dockerfile","startCommand":"python -m app.ingestion.runner","cronSchedule":"0 6 * * 2"}'
+```
+
+Deploying a cron service only *builds* it — the container does not run until
+the schedule fires, so empty logs after a successful deploy are expected, not a
+failure. To exercise the real cron path rather than the API's in-process route,
+set `cronSchedule` to a couple of minutes ahead, redeploy, watch it fire, then
+restore `0 6 * * 2`. Let the run finish before restoring: a redeploy kills it.
+Set the variables with `railway variable set KEY --stdin --skip-deploys` so
+secrets are never echoed into a terminal or transcript.
+
 Every attempt writes a row to `ingest_runs` whether it succeeds or dies, which
 is what `/api/health` reads. A single failing source no longer aborts the run.
 
@@ -82,14 +161,16 @@ locally and restore instead:
 cd backend
 DATABASE_URL='postgresql://…railway…' uv run alembic upgrade head
 
-# Dump local data. Use a client matching the REMOTE major version — a PG16
-# pg_dump cannot feed a PG17 server. The client needs PostGIS only in the
-# server, not in itself, so use plain `postgres:17-alpine`: it is multi-arch,
-# while `postgis/postgis:17-3.5` publishes no arm64 build and will not run on
-# an Apple Silicon machine.
+# Dump local data. Use a client matching the REMOTE major version. Both ends
+# are PG16 (step 1 pins 16-3.4), so postgres:16-alpine is the right client —
+# a dump written by a PG17 client cannot be read by a PG16 pg_restore.
+# The client needs PostGIS in the server, not in itself, so plain
+# `postgres:16-alpine` is enough — and it is multi-arch, while
+# `postgis/postgis:17-3.5` publishes no arm64 build and will not run at all
+# on an Apple Silicon machine.
 #
 # The three restrictions are all load-bearing (see below):
-docker run --rm -e PGPASSWORD=conflict -v "$OUT:/out" --network host postgres:17-alpine \
+docker run --rm -e PGPASSWORD=conflict -v "$OUT:/out" --network host postgres:16-alpine \
   pg_dump -h 127.0.0.1 -p 5432 -U conflict -d conflict \
   --data-only --no-owner --no-privileges \
   --schema=public \
@@ -97,7 +178,7 @@ docker run --rm -e PGPASSWORD=conflict -v "$OUT:/out" --network host postgres:17
   --exclude-table-data=alembic_version \
   -Fc -f /out/seed.dump
 
-docker run --rm -v "$OUT:/out" --network host postgres:17-alpine \
+docker run --rm -v "$OUT:/out" --network host postgres:16-alpine \
   pg_restore -d 'postgresql://…railway…' --data-only --no-owner /out/seed.dump
 ```
 
@@ -106,7 +187,7 @@ its VM, so a `-v` target anywhere else (`/tmp`, a scratch dir) silently lands
 *inside the VM* and the host sees no file — with pg_dump still exiting 0.
 
 Why each restriction is needed — all three were confirmed by restoring into a
-scratch PG17 + PostGIS 3.5 before any remote database existed:
+scratch PostGIS container before any remote database existed:
 
 - `--schema=public` drops the `tiger` and `topology` schemas. The PostGIS image
   enables `postgis_topology` and `postgis_tiger_geocoder`, whose config tables
@@ -153,6 +234,35 @@ curl -sD - -o /dev/null https://<api>.up.railway.app/api/health | grep -i x-rate
 # `x-ratelimit-remaining: 119` readings mean the buckets are per-client;
 # a second reading of 118 means everyone shares one — read hops[-2] instead.
 ```
+
+## Live deployment (as of 2026-09-03)
+
+Railway project `conflict-coordinate` (`cc9fe6e2-2583-445c-8c28-41104e62faaf`),
+environment `production`:
+
+| Service | What it is | Notes |
+|---|---|---|
+| `postgres` | `postgis/postgis:16-3.4` | PG 16.4 / PostGIS 3.4.3, 5 GB volume, TCP proxy for restores |
+| `api` | repo `backend/`, Dockerfile | https://api-production-6e126.up.railway.app |
+| `ingest` | same image, `startCommand` override | cron `0 6 * * 2` |
+
+`DATABASE_URL` on both app services points at
+`postgres.railway.internal:5432` over Railway's private network rather than
+through the TCP proxy — the proxy exists for restores from a laptop, not for
+service-to-service traffic.
+
+Seeded 2026-09-03 from the local database: all 15 tables restored row-for-row
+(1,088,691 `entity_mentions`, 844,365 `crisis_intensity_weekly`, 269,421
+`crisis_events`), `alembic_version` at `0014`, 563 MB on disk. First
+production ingest was `ingest_runs` id 10, `ok=true`, 8m31s, exercised through
+the real cron rather than the API route.
+
+Local secrets for this deployment live in `~/.conflict-deploy/` (`prod.env`,
+`db.secret`, `crontab.backup`) — outside the repo, mode 600. The production
+`ADMIN_TOKEN` is **not** the local dev one.
+
+The interim local crontab from B6 was removed once the Railway cron was proven
+(backup in `~/.conflict-deploy/crontab.backup`).
 
 ## Attribution
 
