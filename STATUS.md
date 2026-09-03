@@ -12,10 +12,9 @@ done. The dot count moved twice: 350 → 311 as the window advanced three weeks
 in Phase B, then 311 → 293 when Phase C fixed a rollup bug that had been
 keeping regions on the globe on month-old counts. **Phase D is next.**
 
-*One Phase C verification is still open: the classification has not yet run
-through a full unattended ingest — the confirming run was interrupted before
-it reached the tail. Next Tuesday's cron closes it. Everything else below was
-re-checked against the database.*
+*All Phase C verifications are closed, including the confirming ingest
+(`ingest_runs` id 7, `ok=true`, 7m07s). Every figure below came from the
+database after that run.*
 
 ---
 
@@ -27,11 +26,11 @@ re-checked against the database.*
 | Newest aggregate week in DB | 2026-08-01 | **2026-08-22** |
 | Newest event of any kind | 2026-08-14 | **2026-09-02** (GDELT, same-day) |
 | `/api/health` status | `"stale"` | **`"ok"`** |
-| Rows in `ingest_runs` | 0 — never written to | **3** (one ok, one failed, one interrupted) |
+| Rows in `ingest_runs` | 0 — never written to | **4** (two ok, one failed, one interrupted) |
 | Scheduled ingest | none | **crontab, Tuesdays 06:00 UTC** |
 | Globe dots | 350 regions, 55 countries | **293 regions, 52 countries** |
 | Dots carrying a conflict name | 182 of 350 (52%) | **189 of 293 (65%)** |
-| Dots stating what kind of violence | none — the field didn't exist | **293: 196 armed, 74 criminal, 15 unrest, 8 unclear** |
+| Dots stating what kind of violence | none — the field didn't exist | **293: 198 armed, 74 criminal, 15 unrest, 6 unclear** |
 | Registry conflicts | 22, 13 with zero footprint cells | unchanged |
 | `crisis_events` | 245,321 rows, 143,871 routed | **268,029 rows, 153,889 routed** |
 | Events routed across a border | 2,792 | **0** |
@@ -135,9 +134,9 @@ riots: nine Iranian dots and `india-bihar` were standing on month-old counts
 with nothing violent in the current window at all.
 
 **104 of 293 dots still carry no conflict name**, so their dossier section 03
-is empty — but 67 of those 104 now say something about themselves anyway
-(48 criminal, 15 unrest, 4 unclear). The real registry-coverage gap is the
-remaining **37 unnamed dots classed armed_conflict**:
+is empty — but 66 of those 104 now say something about themselves anyway
+(48 criminal, 15 unrest, 3 unclear). The real registry-coverage gap is the
+remaining **38 unnamed dots classed armed_conflict**:
 
 ```
 BRA 26   NGA 11   IRQ 9   ECU 8   HND 6   KEN 6   COD 4   GTM 3
@@ -169,7 +168,7 @@ finally run end to end, and both are fixed:
 `pointsMerge={false}`, radius `0.34 + 0.1·log1p(events)`, click → dossier +
 fly-to, so every dot is its own object. At the default altitude of 2.4 with
 293 dots the clusters still collide. Phase C added the first filter — by kind
-of violence, which cuts the globe to 196 / 74 / 15 — but there is still **no
+of violence, which cuts the globe to 198 / 74 / 15 — but there is still **no
 search and no region list**. Hex view is a density read, not a disambiguator.
 That is Phase D.
 
@@ -327,7 +326,7 @@ cached xlsx and would sharpen unrest (`Mob violence` vs `Violent
 demonstration`), but Rio and Donetsk both show `Armed clash`, so it does not
 touch the axis that mattered. Not worth a migration and a re-ingest.
 
-*Verified:* 293 dots — **196 armed, 74 criminal, 15 unrest, 8 unclear**.
+*Verified:* 293 dots — **198 armed, 74 criminal, 15 unrest, 6 unclear**.
 Hand-checked 20 spanning all four classes: 16 clean, 4 arguable, none wrong.
 `palestine-west-bank` reads armed off Israeli forces though 85% of its window
 is riots; `colombia-atlantico` reads criminal off Gulf Clan, which ACLED types
@@ -346,12 +345,17 @@ dossier chip's `title` is the basis. `UNCLASSIFIED` renders dim beside
 *Verified:* `tsc -b` and `npm run build` clean; `/api/globe` and
 `/api/crises/{slug}` both carry the class and its basis.
 
-*Still open:* the classification has not run through a full unattended ingest.
-The confirming run was interrupted about a minute in, before it reached the
-tail — nothing was written, and it left the orphan `ingest_runs` row noted in
-§5. Next Tuesday's cron closes this; if the class counts hold near
-196/74/15/8 and no dot flips class without its actor bag changing, C7 is
-confirmed end to end.
+**Confirmed end to end** by `ingest_runs` id 7 (`ok=true`, 7m07s). The dot
+set was identical — none left, none joined — and exactly **two** dots changed
+class, both `unclear` → `armed_conflict`: `colombia-santander` and
+`iraq-maysan`, each because the lagged event source attached new incidents
+that put a national military in its actor bag for the first time. **Zero dots
+flipped class with an unchanged actor bag**, which is the property that
+matters: the label is a function of its evidence, not of when it ran.
+
+The one earlier attempt at this run was interrupted a minute in, before it
+reached the tail; it wrote nothing and left the orphan `ingest_runs` row
+noted in §5.
 
 ### Phase D — findability (~1 day)
 
