@@ -31,4 +31,8 @@ COPY alembic ./alembic
 COPY app ./app
 
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# The API role owns the schema: it migrates, then serves. `&&` matters — a
+# failed migration must stop the container rather than serve requests against
+# a schema the code no longer matches. The ingest role overrides this CMD
+# entirely, so migrations run from exactly one place.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

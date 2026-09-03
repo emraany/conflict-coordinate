@@ -23,6 +23,11 @@ Give the volume **≥ 2 GB** — the seed dump is ~750 MB before WAL and growth.
 
 - Source: this repo, root directory `backend/`, Dockerfile build.
 - Railway injects `PORT`; the image's CMD already reads it.
+- The CMD runs `alembic upgrade head` before uvicorn, so every deploy
+  migrates itself. A failed migration exits the container rather than serving
+  against a schema the code no longer matches — Railway will restart-loop and
+  the build logs name the failure. The cron service overrides the CMD, so
+  migrations run from this service only.
 
 Variables:
 
@@ -72,7 +77,8 @@ Migrations create the schema but no data, and a from-scratch ingest is slow
 locally and restore instead:
 
 ```bash
-# Schema first, against Railway
+# Schema first. Deploying the API service (step 2) already did this — run it
+# by hand only to get the schema up before that service exists.
 cd backend
 DATABASE_URL='postgresql://…railway…' uv run alembic upgrade head
 
@@ -102,6 +108,20 @@ new `ingest_runs` row lands and `/api/health` flips to `ok`.
 Point an uptime monitor at `/api/health`. On a weekly cadence a broken
 pipeline is otherwise invisible for a week — and `status` there describes the
 *data*, not the process, so it catches a stall that still returns HTTP 200.
+A monitor polling once a minute sits far under the throttle below.
+
+**Check the throttle keys on the real caller.** Every route is limited to 120
+requests/minute per client IP, and `app/rate_limit.py` derives that IP from
+the *last* `X-Forwarded-For` hop, assuming exactly one proxy in front of the
+app. If Railway runs two, every visitor lands in one bucket and the site
+throttles itself under normal traffic. One request confirms which it is:
+
+```bash
+curl -sD - -o /dev/null https://<api>.up.railway.app/api/health | grep -i x-ratelimit
+# then again from a second network (phone hotspot). Two independent
+# `x-ratelimit-remaining: 119` readings mean the buckets are per-client;
+# a second reading of 118 means everyone shares one — read hops[-2] instead.
+```
 
 ## Attribution
 

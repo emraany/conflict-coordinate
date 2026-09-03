@@ -189,11 +189,16 @@ the camera and the dossier where a click would.
 - **Archive is still genuinely old** — Rio's newest incident with prose is
   2026-03-27, Donetsk's 2026-07-31. Correctly labeled as an archive; the
   current layer is the aggregates, which are 11 days old.
-- **Nothing reaps an interrupted run.** A killed ingest leaves an
-  `ingest_runs` row with `finished_at` NULL forever. `/api/health` is
-  unaffected (it keys off the last *successful* run), so this is cosmetic —
-  but a long-running deployment will accumulate them. Row id 6 is one, left
-  by the interrupted Phase C verification run.
+- ~~**Nothing reaps an interrupted run.**~~ Fixed 2026-09-03. A killed ingest
+  left an `ingest_runs` row with `finished_at` NULL forever. `_start_ingest_run`
+  now closes out any open row older than `ABANDONED_RUN_HOURS` (24) before
+  opening its own, marking it `ok=false` with an explicit error. Bounded by
+  age rather than done unconditionally, so a manual `POST /api/ingest/run`
+  fired while the weekly cron is mid-flight doesn't declare the cron dead —
+  the longest run on record is 11m27s. *Verified* against the live table in a
+  rolled-back transaction: a synthetic 30h-old open row was reaped, a
+  10-minute-old one was not. Row id 6 (the interrupted Phase C run) was 20.7h
+  old at the time and will be closed by the next ingest.
 
 ### 6. ~~Dots stood on counts no current week justified~~ — fixed in Phase C
 
@@ -414,9 +419,10 @@ not** (`8213b4c`):
   deliberately off the lethality ramp so it cannot be misread as a severity,
   drawn from the unfiltered dot list and shown in hex view too.
 
-**Still open:** the two fixes have not themselves been confirmed on screen,
-and neither have collapse persistence or the filter-reset check. The sandbox
-grants browsers read-only, so they need a human at the keyboard.
+**Confirmed on screen by the author, 2026-09-03** — both fixes behave as
+described. Collapse persistence and the filter-reset check were not part of
+that pass and remain unconfirmed; the sandbox grants browsers read-only, so
+they still need a human at the keyboard.
 
 *Deferred, as decisions rather than oversights:* alias matching — the 153
 rows in `admin1_aliases` ("Halab"→Aleppo, "Dacca"→Dhaka) would need a backend
@@ -458,8 +464,9 @@ names both inputs so that tension is visible.*
 | ~~2~~ | ~~**Phase B** (B4–B6)~~ | ✅ Done. No plan mode was needed, as predicted. Running it surfaced two live bugs the code review could not have. |
 | ~~3~~ | ~~**Phase C** (C7–C8)~~ | ✅ Done in three commits, not two: checking the doc against the database first turned up the stale-rollup bug, which had to land before anything was classified. |
 | ~~4~~ | ~~**Phase D** (D9)~~ | ✅ Done in one commit, no backend change. The plan was right that it was small, and right about why. |
-| — | **Deploy** ← **next** | Not in this plan's numbering, and the largest remaining gap: the snapshot's last row still reads `Deployed anywhere: no`. See below. |
-| 5 | E10, E11 | Optional. E10 is worth more after a deploy — a shareable URL is worth little on localhost. |
+| ~~5~~ | ~~**Pre-deploy hardening**~~ | ✅ Done 2026-09-03, no plan mode needed. Rate limiting, migrations on deploy, and the abandoned-run reaper. Tests 11 → 16. |
+| 6 | **Deploy** ← **next** | Not in this plan's numbering, and the largest remaining gap: the snapshot's last row still reads `Deployed anywhere: no`. Nothing repo-side blocks it now. See below. |
+| 7 | E10, E11 | Optional, and worth splitting — they share no code. E10 is worth more after a deploy; a shareable URL is worth little on localhost. |
 
 **Prompt to open the next planning session after a context clear:**
 
@@ -510,16 +517,31 @@ debugging B6 that can go with it. `/api/health` is now worth pointing an uptime
 monitor at: it distinguishes `ok`, `degraded` (last run failed, earlier
 success stands) and `stale` (no success within `STATUS_STALE_DAYS`).
 
-Two gaps the deploy plan called for and didn't get:
+~~Two gaps the deploy plan called for and didn't get.~~ **Both closed
+2026-09-03**, before any hosting account exists:
 
-- **No rate limiting** anywhere in `backend/app/`. `/api/activity` clamps
-  `limit` at 1000, but nothing throttles requests. A public URL with no auth
-  and no throttle. Re-checked 2026-09-03: still nothing, and no `slowapi` in
-  `pyproject.toml`.
-- **Nothing runs migrations on deploy.** `backend/Dockerfile:34` is uvicorn
-  only — fine for launch, a footgun on every future migration.
+- ~~**No rate limiting.**~~ `app/rate_limit.py` + `SlowAPIMiddleware`, applied
+  as a global default rather than per-endpoint so a new router can't ship
+  unthrottled by omission. 120 req/min per client IP, keyed off the **last**
+  `X-Forwarded-For` hop — the one a proxy appends and a caller therefore
+  can't spoof. *Verified* against the running API: 130 requests from one IP
+  → 120×200 + 10×429; a second IP unaffected; rotating the leading forwarded
+  hop still 429s; the 429 carries `Retry-After` and CORS headers, so a browser
+  sees a real 429 rather than an opaque network error. Admin routes are
+  covered too — 120 bad-token attempts, then 429. Five unit tests pin the key
+  function (`tests/test_rate_limit.py`).
+- ~~**Nothing runs migrations on deploy.**~~ The API role's CMD is now
+  `alembic upgrade head && uvicorn …`. *Verified* by building the image and
+  running it against the local DB: migrations run, then uvicorn serves; and
+  pointed at a database that doesn't exist, the container exits **1** with
+  uvicorn never starting, rather than serving against a schema the code no
+  longer matches. The ingest role overrides the CMD, so migrations run from
+  exactly one place.
 
-Both are repo-side work that can land before any account exists.
+**The one assumption to check once Railway is up:** the client-IP derivation
+assumes a single proxy in front of the app. With two, every visitor shares one
+bucket and the site throttles itself. `DEPLOY.md` §6 has the one-request check
+and the fix.
 
 ---
 

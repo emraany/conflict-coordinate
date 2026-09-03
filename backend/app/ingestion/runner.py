@@ -552,6 +552,29 @@ def _promote_emerging_conflicts(db: Session, threshold: int) -> int:
     return result.rowcount or 0
 
 
+# A killed run never reaches _finish_ingest_run, so its row keeps
+# finished_at NULL forever. Nothing reads those rows — /api/health keys off
+# the last *successful* run — but an unattended schedule accumulates them.
+# Closing them out is bounded by age rather than done unconditionally, so a
+# manual /api/ingest/run started while the weekly cron is mid-flight doesn't
+# declare the cron dead. The longest run on record is under 12 minutes.
+ABANDONED_RUN_HOURS = 24
+
+
+def _reap_abandoned_runs(rec_db: Session) -> int:
+    cutoff = datetime.now(UTC) - timedelta(hours=ABANDONED_RUN_HOURS)
+    result = rec_db.execute(
+        update(IngestRun)
+        .where(IngestRun.finished_at.is_(None), IngestRun.started_at < cutoff)
+        .values(
+            finished_at=datetime.now(UTC),
+            ok=False,
+            error=f"abandoned — no completion recorded within {ABANDONED_RUN_HOURS}h",
+        )
+    )
+    return result.rowcount or 0
+
+
 def _start_ingest_run(trigger: str) -> int | None:
     """Open an ingest_runs row on its own session.
 
@@ -560,6 +583,9 @@ def _start_ingest_run(trigger: str) -> int | None:
     """
     try:
         with SessionLocal() as rec_db:
+            reaped = _reap_abandoned_runs(rec_db)
+            if reaped:
+                logger.info("closed %s abandoned ingest_runs row(s)", reaped)
             run = IngestRun(trigger=trigger)
             rec_db.add(run)
             rec_db.commit()
