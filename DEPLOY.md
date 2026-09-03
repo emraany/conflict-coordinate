@@ -87,8 +87,21 @@ changes the hostname, so set `VITE_API_URL` *after* the domain is known good.
 
 Creating a service with `--repo` does **not** wire the GitHub deploy trigger,
 so pushes will not build. Trigger one deploy explicitly with
-`serviceInstanceDeployV2(serviceId:, environmentId:)`, and add a
-`deploymentTriggerCreate` if you want auto-deploy on push.
+`serviceInstanceDeployV2(serviceId:, environmentId:)`.
+
+Adding a real trigger needs the **Railway GitHub App installed** on the
+account, which cloning does not. A public repo builds fine without it, so the
+gap only shows up when you try to automate: `deploymentTriggerCreate` fails
+with *"no one in the project has access to it"* and `githubRepos` returns
+*Not Authorized*. Install it from the Railway dashboard (service → Settings →
+Source → connect GitHub), then:
+
+```bash
+railway api 'mutation($in: DeploymentTriggerCreateInput!){deploymentTriggerCreate(input:$in){id branch repository}}' \
+  --var in='{"branch":"main","environmentId":"<env>","projectId":"<proj>","provider":"github","repository":"<owner>/conflict-coordinate","serviceId":"<svc>","rootDirectory":"backend"}'
+```
+
+Vercel needs no equivalent step — `vercel link` wires its own integration.
 
 Variables:
 

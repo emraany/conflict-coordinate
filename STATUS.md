@@ -1,4 +1,4 @@
-# Project status — 2026-09-02 (Phases A, B, C and D complete)
+# Project status — 2026-09-03 (Phases A–D complete; deployed)
 
 Audited against the running local stack (colima + `conflict_db` + API on
 :8000), not against the docs. Every figure below came from the database or a
@@ -11,8 +11,25 @@ section).
 **Phase D** (the region index — search by name instead of by eye) are done.
 The dot count moved twice: 350 → 311 as the window advanced three weeks
 in Phase B, then 311 → 293 when Phase C fixed a rollup bug that had been
-keeping regions on the globe on month-old counts. **Only the optional
-Phase E remains.**
+keeping regions on the globe on month-old counts. **The site is deployed
+and public: https://conflict-coordinate.vercel.app**
+
+## What's left
+
+Nothing is blocking. Everything below is optional or needs a browser.
+
+| | Item | Needs |
+|---|---|---|
+| 1 | **Uptime monitor** on `/api/health` | a signup — catches a stalled pipeline that still returns HTTP 200, otherwise invisible for a week |
+| 2 | **Throttle-key check** | a second network (phone hotspot); one machine cannot tell a per-client bucket from a shared one |
+| 3 | **Railway deploy trigger** | connecting GitHub to Railway; until then backend deploys are manual |
+| 4 | **E10 — `/conflicts/:slug` as a real page** | nothing. Worth the most now that there is a URL to share |
+| 5 | **E11 — forecasting** | nothing. Last open ML-roadmap item |
+| 6 | **Registry coverage** | 38 unnamed dots classed `armed_conflict` (BRA 26, NGA 11, IRQ 9, ECU 8…). No routing work reaches these — the registry has no conflict for those countries |
+
+1–3 are operational and small. 4 and 5 are portfolio polish. 6 is the only
+one that would change what the map *says*, and it is editorial work rather
+than engineering: writing registry entries, each with a citation.
 
 *All Phase C verifications are closed, including the confirming ingest
 (`ingest_runs` id 7, `ok=true`, 7m07s). Every figure below came from the
@@ -51,17 +68,13 @@ correctly reading *Russo-Ukrainian War*. Before Phase A it was unnamed.
 
 ## What's wrong
 
-### 1. The dot layer never runs actor-match routing — root cause of the naming holes
+### 1. ~~The dot layer never runs actor-match routing~~ — fixed in Phase A
 
 `route_event` has three tiers in priority order: actor match → admin1
-footprint → country fallback. Both dot-naming call sites pass an empty actor
-list, so tier 1 never fires:
-
-```python
-# backend/app/routers/globe.py:61  and  backend/app/routers/crises.py:155
-conflict_id = route_event([], c.country_iso3, c.admin1_norm, idx)
-#                         ^^ actor list — always empty
-```
+footprint → country fallback. Both dot-naming call sites used to pass an empty
+actor list, so tier 1 never fired. Both now pass the real bag
+(`globe.py:65`, `crises.py:141`), which is what took named dots to 65%.
+The rest of this section is kept as the diagnosis that produced the fix.
 
 Meanwhile 143,871 events are *already* routed by actor match during ingest.
 The classification work is done and unused.
@@ -537,10 +550,15 @@ Railway cron was proven (backup: `~/.conflict-deploy/crontab.backup`).
   invisible for a week.
 - **The throttle-key check** (below) — needs a second network.
 
-Note Railway services have **no GitHub deploy trigger**: `railway add --repo`
-does not wire one, so pushes to `main` rebuild the Vercel frontend but not the
-API or ingest. Deploy those with `serviceInstanceDeployV2`, or add a
-`deploymentTriggerCreate`.
+Railway services have **no GitHub deploy trigger**, so pushes to `main`
+rebuild the Vercel frontend but not the API or ingest — deploy those with
+`serviceInstanceDeployV2`. Adding one is **blocked on connecting GitHub to
+Railway**: `deploymentTriggerCreate` returns *"no one in the project has
+access to it"* and `githubRepos` returns *Not Authorized*, because the Railway
+GitHub App is not installed. The builds work regardless only because the repo
+is public and Railway can clone it anonymously. Install the app from the
+Railway dashboard (service → Settings → Source), then re-run
+`deploymentTriggerCreate` for both `api` and `ingest`.
 
 ~~Two gaps the deploy plan called for and didn't get.~~ **Both closed
 2026-09-03**, and both since confirmed on the deployed stack:
