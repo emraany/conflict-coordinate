@@ -24,6 +24,7 @@ interface RingDatum {
   maxRadius: number;
   propagationSpeed: number;
   repeatPeriod: number;
+  color: string;
 }
 
 type TextureMode = "color" | "mono";
@@ -314,8 +315,31 @@ export function Globe({
         maxRadius: 4,
         propagationSpeed: 2,
         repeatPeriod: 2000,
+        color: dotRamp[dotRamp.length - 1],
       }));
   }, [points]);
+
+  // Say which dot is selected. Flying to a region is not the same as finding
+  // it: the camera lands on Rio de Janeiro amid 26 Brazilian dots and nothing
+  // distinguishes it. Bone, not a ramp colour — this is chrome pointing at
+  // the data, not more data. Read from `dots`, not `points`, so the marker
+  // survives a class filter that hides the dot.
+  const selectionRing: RingDatum[] = useMemo(() => {
+    const target = selectedSlug
+      ? dots.find((d) => d.slug === selectedSlug)
+      : undefined;
+    if (!target) return [];
+    return [
+      {
+        lat: target.lat,
+        lng: target.lng,
+        maxRadius: 6,
+        propagationSpeed: 1,
+        repeatPeriod: 1400,
+        color: colors.text,
+      },
+    ];
+  }, [dots, selectedSlug]);
 
   // Track container size so the globe canvas matches its parent (not the window).
   useEffect(() => {
@@ -468,13 +492,13 @@ export function Globe({
           </div>`;
         }}
         onPointClick={(p) => onSelect((p as PointDatum).slug)}
-        ringsData={viewMode === "dots" ? rings : []}
+        ringsData={viewMode === "dots" ? [...rings, ...selectionRing] : selectionRing}
         ringLat={(d) => (d as RingDatum).lat}
         ringLng={(d) => (d as RingDatum).lng}
         ringMaxRadius={(d) => (d as RingDatum).maxRadius}
         ringPropagationSpeed={(d) => (d as RingDatum).propagationSpeed}
         ringRepeatPeriod={(d) => (d as RingDatum).repeatPeriod}
-        ringColor={() => dotRamp[dotRamp.length - 1]}
+        ringColor={(d: object) => (d as RingDatum).color}
         // Hex intensity view
         hexBinPointsData={viewMode === "hex" ? points : []}
         hexBinPointLat={(d: object) => (d as PointDatum).lat}

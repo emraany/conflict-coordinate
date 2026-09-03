@@ -47,6 +47,8 @@ export function RegionIndex({ dots, selectedSlug, onSelect }: Props) {
   // tinted row on load reads as a selection the user did not make.
   const [highlight, setHighlight] = useState(-1);
   const rowRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const results = useMemo(() => {
     const q = fold(query);
@@ -66,26 +68,48 @@ export function RegionIndex({ dots, selectedSlug, onSelect }: Props) {
       rowRefs.current[highlight]?.scrollIntoView({ block: "nearest" });
   }, [highlight]);
 
-  if (dots.length === 0) return null;
+  // Bound to the document, not to the input. On the input alone the arrows
+  // died the moment focus moved — and clicking a row moves focus to that row's
+  // button, which is exactly when you next want to press down. Scoped so it
+  // never steals keys: only while the panel is open, never with a modifier
+  // held, and only when focus is inside the panel or nowhere at all.
+  useEffect(() => {
+    if (collapsed) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const active = document.activeElement;
+      const ours =
+        active === null ||
+        active === document.body ||
+        panelRef.current?.contains(active) === true;
+      if (!ours) return;
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      const last = Math.max(0, results.length - 1);
-      setHighlight((i) =>
-        e.key === "ArrowDown" ? Math.min(i + 1, last) : Math.max(i - 1, 0),
-      );
-    } else if (e.key === "Enter") {
-      const hit = results[highlight >= 0 ? highlight : 0];
-      if (hit) onSelect(hit.slug);
-    } else if (e.key === "Escape") {
-      if (query) setQuery("");
-      else e.currentTarget.blur();
-    }
-  };
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const last = Math.max(0, results.length - 1);
+        setHighlight((i) =>
+          e.key === "ArrowDown" ? Math.min(i + 1, last) : Math.max(i - 1, 0),
+        );
+      } else if (e.key === "Enter") {
+        // A focused button already turns Enter into its own click; handling it
+        // here too would select two different rows at once.
+        if (active instanceof HTMLButtonElement) return;
+        const hit = results[highlight >= 0 ? highlight : 0];
+        if (hit) onSelect(hit.slug);
+      } else if (e.key === "Escape") {
+        if (query) setQuery("");
+        else inputRef.current?.blur();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [collapsed, results, highlight, query, onSelect]);
+
+  if (dots.length === 0) return null;
 
   return (
     <div
+      ref={panelRef}
       style={{
         position: "absolute",
         top: space.md,
@@ -148,9 +172,9 @@ export function RegionIndex({ dots, selectedSlug, onSelect }: Props) {
             }}
           >
             <input
+              ref={inputRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
               placeholder="region, country or conflict..."
               style={{
                 background: colors.bgSunken,
